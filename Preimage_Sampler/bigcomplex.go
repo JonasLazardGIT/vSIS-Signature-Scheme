@@ -347,27 +347,29 @@ func ComplexInterpolate(f *CyclotomicFieldElem, ringQ *ring.Ring) *ring.Poly {
 func ComplexEvaluateSub(p *ring.Poly, m int, ringQ *ring.Ring, prec uint) *CyclotomicFieldElem {
 	mod := ringQ.Modulus[0]
 
-	// 1) Build a slice of length m of *BigComplex values:
+	// 1) Build “twisted” BigComplex input of length m:
 	bigSlice := make([]*BigComplex, m)
 	for j := 0; j < m; j++ {
 		sInt := UnsignedToSigned(p.Coeffs[0][j], mod)
-		// Compute float64(sInt) * e^{i θ}, where θ = π j / m
 		θ := math.Pi * float64(j) / float64(m)
-		re64 := float64(sInt) * math.Cos(θ)
-		im64 := float64(sInt) * math.Sin(θ)
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(re64)
-		imBF := new(big.Float).SetPrec(prec).SetFloat64(im64)
-		bigSlice[j] = NewBigComplexFromFloat(reBF, imBF)
+
+		// ** MUST use e^(−i·θ )  =  cos(θ) − i·sin(θ) **
+		re := float64(sInt) * math.Cos(θ)
+		im := float64(sInt) * -math.Sin(θ) // ← negative sign here
+
+		reBF := new(big.Float).SetPrec(prec).SetFloat64(re)
+		imBF := new(big.Float).SetPrec(prec).SetFloat64(im)
+		bigSlice[j] = &BigComplex{Real: reBF, Imag: imBF}
 	}
 
-	// 2) Call high‐precision IFFT:
-	ifftResult := IFFTBig(bigSlice, prec)
+	// 2) Call forward FFT (not IFFT):
+	fftResult := FFTBig(bigSlice, prec)
 
-	// 3) Copy into a new CyclotomicFieldElem, mark Domain=Eval
+	// 3) Copy result into a CyclotomicFieldElem, mark Domain=Eval
 	out := NewFieldElemBig(m, prec)
 	out.Domain = Eval
 	for k := 0; k < m; k++ {
-		out.Coeffs[k] = ifftResult[k].Copy()
+		out.Coeffs[k] = fftResult[k].Copy()
 	}
 	return out
 }

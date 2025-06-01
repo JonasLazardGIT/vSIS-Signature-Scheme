@@ -2,7 +2,6 @@
 package Preimage_Sampler
 
 import (
-	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
@@ -12,235 +11,356 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
-// maxAbsDiff computes the maximum absolute difference between two real‐valued slices.
-func maxAbsDiff(a, b []complex128) float64 {
-	if len(a) != len(b) {
-		panic("length mismatch")
-	}
-	max := 0.0
-	for i := range a {
-		d := math.Abs(real(a[i]) - real(b[i]))
-		if d > max {
-			max = d
-		}
-		d2 := math.Abs(imag(a[i]) - imag(b[i]))
-		if d2 > max {
-			max = d2
-		}
-	}
-	return max
-}
+//--------------------------------------------------------------------------------------------------
+// TestFFTvsNTT: NTT↔InvNTT and FFTBig↔IFFTBig (as before), plus additional “benchmark” operations.
+//--------------------------------------------------------------------------------------------------
 
-// TestFFTvsNTT tests, for several random integer polynomials, the exactness of
-// (1) NTT ↔ InvNTT (should be exact in Zq) and (2) FFT ↔ IFFT (floating–point).
 func TestFFTvsNTT(t *testing.T) {
-	// Parameters for the test:
 	const (
-		N    = 512               // ring dimension (power of two)
-		qMod = uint64(1<<30 + 1) // a prime ≡ 1 mod 2N; here 1073741825 = 2^30 +1 is not prime,
-		// so pick a known NTT‐friendly prime, e.g.  2147483649 ≡ 1 mod 1024?
-		// For safety, use one that Lattigo accepts. Let's use  2013265921 = 15·2^27+1,
-		// which supports N up to 2^27. We'll just do N=512.
+		N    = 512
+		qMod = uint64(2013265921) // prime ≡ 1 mod 1024
 	)
-	var (
-		primeList = []uint64{2013265921} // 2013265921 ≡ 1 mod 2^27, so certainly ≡1 mod 1024
-	)
+	primeList := []uint64{qMod}
+
 	// Build ringQ
 	ringQ, err := ring.NewRing(N, primeList)
 	if err != nil {
 		t.Fatalf("ring.NewRing(%d, %v) failed: %v", N, primeList, err)
 	}
 
-	// Number of random polynomials to test
 	const trials = 10
-
-	// Helper: for each trial, build a random integer polynomial p (coeffs in [0, q−1]),
-	// then:
-	//   1) check NTT↔InvNTT: exactly recover p
-	//   2) check FFT↔IFFT:
-	//       a) represent p in ℤ (by SignedToSigned), build a length‐N complex slice
-	//          vals[i] = p_i (as float64), call FFT(vals,N) → eval, then IFFT(eval,N) → rec,
-	//          measure max|rec[i]−p_i|. That should be O(1e−12 · N) or so in double precision.
-	//       b) also compare rec (rounded) to exact integer p_i, count how many entries deviate by ≥0.5.
+	prec := uint(128) // 128-bit precision for BigFloat
 
 	for trial := 0; trial < trials; trial++ {
-		// 1) generate a random "coeff domain" polynomial p
+		// 1) Generate a random polynomial p ∈ R_q[x]/(x^N+1), coefficients in [0, qMod)
 		p := ringQ.NewPoly()
 		for i := 0; i < N; i++ {
 			p.Coeffs[0][i] = rand.Uint64() % qMod
 		}
 
-		// 2) NTT ↔ InvNTT round‐trip check
-		cpy := ringQ.NewPoly()
-		// Copy p → cpy
+		// 2) NTT ↔ InvNTT round-trip (must be exact in ℤ/q):
+		buf := ringQ.NewPoly()
+		copy(buf.Coeffs[0], p.Coeffs[0])
+		ringQ.NTT(buf, buf)
+		ringQ.InvNTT(buf, buf)
 		for i := 0; i < N; i++ {
-			cpy.Coeffs[0][i] = p.Coeffs[0][i]
-		}
-		// Forward NTT, then InvNTT
-		ringQ.NTT(cpy, cpy)
-		ringQ.InvNTT(cpy, cpy)
-		// Now cpy should match p exactly
-		for i := 0; i < N; i++ {
-			if cpy.Coeffs[0][i] != p.Coeffs[0][i] {
+			if buf.Coeffs[0][i] != p.Coeffs[0][i] {
 				t.Fatalf("NTT↔InvNTT failed at trial %d, index %d: got %d, want %d",
-					trial, i, cpy.Coeffs[0][i], p.Coeffs[0][i])
+					trial, i, buf.Coeffs[0][i], p.Coeffs[0][i])
 			}
 		}
 
-		// 3) FFT ↔ IFFT check
-		// Build a slice of length N of complex128: vals[i] = signed(p_i)
-		vals := make([]complex128, N)
+		// 3) FFTBig ↔ IFFTBig check:
+		//    (a) Build signed integer slice orig[i] = UnsignedToSigned(p_i, qMod).
+		orig := make([]float64, N)
 		for i := 0; i < N; i++ {
-			// Convert to "signed" in [−q/2 … +q/2]
-			s := UnsignedToSigned(p.Coeffs[0][i], qMod)
-			vals[i] = complex(float64(s), 0)
+			orig[i] = float64(UnsignedToSigned(p.Coeffs[0][i], qMod))
 		}
-		// Compute FFT(vals) → eval
-		eval := FFT(vals, N)
-		// Compute IFFT(eval) → rec
-		rec := IFFT(eval, N)
 
-		// 3a) measure raw floating‐point error: max|real(rec[i]) − vals[i].Real|
-		maxErr := maxAbsDiff(vals, rec)
-		t.Logf("trial %d: FFT↔IFFT max absolute error = %g", trial, maxErr)
+		//    (b) Lift orig to []*BigComplex and call FFTBig.
+		bigIn := make([]*BigComplex, N)
+		for i := 0; i < N; i++ {
+			reBF := new(big.Float).SetPrec(prec).SetFloat64(orig[i])
+			imBF := new(big.Float).SetPrec(prec).SetFloat64(0.0)
+			bigIn[i] = NewBigComplexFromFloat(reBF, imBF)
+		}
+		evalBig := FFTBig(bigIn, prec)
 
-		// 3b) count how many coefficients would round "incorrectly" to the nearest integer
+		//    (c) Call IFFTBig(evalBig) → coeffBig.
+		coeffBig := IFFTBig(evalBig, prec)
+
+		//    (d) Convert each coeffBig[i].Real back to float64, round, compare to orig[i].
+		recovered := make([]float64, N)
+		maxErr := 0.0
 		wrongCount := 0
 		for i := 0; i < N; i++ {
-			orig := real(vals[i])
-			rounded := math.Round(real(rec[i]))
-			if math.Abs(rounded-orig) > 0.49 {
+			f64, _ := coeffBig[i].Real.Float64()
+			recovered[i] = f64
+			errVal := math.Abs(f64 - orig[i])
+			if errVal > maxErr {
+				maxErr = errVal
+			}
+			if math.Abs(math.Round(f64)-orig[i]) > 0.49 {
 				wrongCount++
 			}
 		}
-		if wrongCount > 0 {
-			t.Logf("  → %d coefficients would round incorrectly (of %d) at trial %d",
-				wrongCount, N, trial)
-		} else {
-			t.Logf("  → all %d coefficients would round correctly at trial %d", N, trial)
-		}
+		t.Logf("trial %d: FFTBig↔IFFTBig max float error = %.5e; misrounds = %d/%d",
+			trial, maxErr, wrongCount, N)
 	}
 }
 
-const (
-	nTest     = 16
-	qTest     = uint64(97) // ≡ 1 mod 32, so n=16 works
-	maxTrials = 20
-)
+//--------------------------------------------------------------------------------------------------
+// TestFieldInverseDiagWithNorm: as before, verifies that aEval·invEval ≈ 1 slotwise.
+//--------------------------------------------------------------------------------------------------
 
-// modInverseUint64 returns a^{-1} mod m (if it exists), or 0 if not invertible.
-func modInverseUint64(a, m uint64) uint64 {
-	ai := new(big.Int).SetUint64(a)
-	mi := new(big.Int).SetUint64(m)
-	inv := new(big.Int).ModInverse(ai, mi)
-	if inv == nil {
-		return 0
-	}
-	return inv.Uint64()
-}
-
-// invertPolyNTT computes the exact inverse of A(X) mod (X^n+1, q) by NTT → pointwise → InvNTT.
-// Returns the inverse in *NTT‐domain*.  If A is not invertible, returns an error.
-func invertPolyNTT(Acoeff *ring.Poly, ringQ *ring.Ring) (*ring.Poly, error) {
-	n := ringQ.N
-
-	// 1) Compute A_ntt = NTT_q(Acoeff)
-	AcoeffCopy := ringQ.NewPoly()
-	copy(AcoeffCopy.Coeffs[0], Acoeff.Coeffs[0])
-	ringQ.NTT(AcoeffCopy, AcoeffCopy)
-
-	// 2) Form Ainv_ntt by inverting each slot in Z_q
-	AinvNTT := ringQ.NewPoly()
-	for i := 0; i < n; i++ {
-		slot := AcoeffCopy.Coeffs[0][i]
-		if slot == 0 {
-			return nil, fmt.Errorf("zero encountered at NTT slot %d; polynomial not invertible", i)
-		}
-		inv := modInverseUint64(slot, ringQ.Modulus[0])
-		if inv == 0 {
-			return nil, fmt.Errorf("no inverse for %d mod %d", slot, ringQ.Modulus[0])
-		}
-		AinvNTT.Coeffs[0][i] = inv
+func TestFieldInverseDiagWithNorm(t *testing.T) {
+	const n = 16
+	const q = uint64(97) // 97 ≡ 1 mod 32, supports NTT size 16
+	ringQ, err := ring.NewRing(n, []uint64{q})
+	if err != nil {
+		t.Fatalf("Failed to make ring: %v", err)
 	}
 
-	// 3) Optionally verify that InvNTT(AinvNTT) is indeed the coefficient‐vector of A^{-1}:
-	//    But here we only need the NTT‐domain form.  If needed, one can do:
-	//    invCoe := ringQ.NewPoly(); ringQ.InvNTT(AinvNTT, invCoe); ringQ.NTT(invCoe, AinvNTT)
-
-	return AinvNTT, nil
-}
-
-// fftInvert computes “FFT‐based” inversion: Apply ComplexEvaluate → invert complex slots → ComplexInterpolate → NTT.
-func fftInvert(Acoeff *ring.Poly, ringQ *ring.Ring, prec uint) *ring.Poly {
-	n := ringQ.N
-
-	// (a) Compute A_coeff explicitly in coefficient domain (in case Acoeff is already NTT).
-	AcoeffCopy := ringQ.NewPoly()
-	copy(AcoeffCopy.Coeffs[0], Acoeff.Coeffs[0])
-	// We want AcoeffCopy in coefficient form; assume input is coefficient form.
-
-	// (b) ComplexEvaluate → returns a FieldElem in evaluation domain (complex double vector).
-	fEval := ComplexEvaluate(AcoeffCopy, ringQ, prec)
-	// Now fEval.Domain == Eval.
-
-	// (c) Invert each complex slot: z → 1/z = (a - ib)/(a^2 + b^2).
-	fInv := NewFieldElemBig(n, prec)
-	for i := 0; i < n; i++ {
-		slot := fEval.Coeffs[i]
-		a, _ := slot.Real.Float64() // Coeffs[i] is a complex number
-		b, _ := slot.Imag.Float64() // Coeffs[i] is a complex number
-		den := a*a + b*b
-		// Avoid divide-by-zero; if den is very small, rounding will be huge.
-		fInv.Coeffs[i] = NewBigComplex(a/den, -b/den, prec)
-	}
-	fInv.Domain = Eval
-
-	// (d) ComplexInterpolate: returns a *NTT‐domain* polynomial under modulus qTest.
-	//     That is, ComplexInterpolate(fInv) yields an NTT‐form ring.Poly so that InvNTT would give the coefficient form.
-	PinvNTT := ComplexInterpolate(fInv, ringQ)
-
-	return PinvNTT // already NTT‐domain under qTest
-}
-
-func TestFFTvsExactInverse(t *testing.T) {
+	prec := uint(64)
 	rand.Seed(time.Now().UnixNano())
 
-	// Build ringQ mod qTest
-	ringQ, err := ring.NewRing(nTest, []uint64{qTest})
+	for trial := 0; trial < 20; trial++ {
+		// (a) Pick a random nonzero polynomial aCoeff in coeff domain
+		aCoeff := ringQ.NewPoly()
+		for i := 0; i < n; i++ {
+			aCoeff.Coeffs[0][i] = uint64(rand.Intn(int(q)))
+		}
+
+		// (b) Embed into evaluation (FFT) domain:
+		aEval := ComplexEvaluate(aCoeff, ringQ, prec)
+		aEval.Domain = Eval
+
+		// (c) Compute invConj,norms := FieldInverseDiagWithNorm(aEval)
+		invConj, norms := FieldInverseDiagWithNorm(aEval)
+		invEval := FieldScalarDiv(invConj, norms)
+		invEval.Domain = Eval
+
+		// (d) Multiply aEval * invEval slotwise → prod
+		prod := FieldMulBig(aEval, invEval) // domain=Eval
+
+		// Check that each slot of prod ≈ 1
+		tol := new(big.Float).SetPrec(prec).SetFloat64(1e-30)
+		for i := 0; i < n; i++ {
+			re := prod.Coeffs[i].Real
+			im := prod.Coeffs[i].Imag
+
+			one := new(big.Float).SetPrec(prec).SetFloat64(1.0)
+			zero := new(big.Float).SetPrec(prec).SetFloat64(0.0)
+
+			diffRe := new(big.Float).Sub(re, one)
+			diffIm := new(big.Float).Sub(im, zero)
+
+			if diffRe.Abs(diffRe).Cmp(tol) > 0 || diffIm.Abs(diffIm).Cmp(tol) > 0 {
+				r64, _ := re.Float64()
+				i64, _ := im.Float64()
+				t.Fatalf("trial %d, slot %d: aEval·invEval ≠ 1 (got % .6g + % .6gi)",
+					trial, i, r64, i64)
+			}
+		}
+
+		// (e) Finally, apply ComplexInterpolate(prod) → get onesPolyNTT, then InvNTT → onesCoeff
+		onesPolyNTT := ComplexInterpolate(prod, ringQ)
+		onesCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(onesPolyNTT, onesCoeff)
+		for i := 0; i < n; i++ {
+			if onesCoeff.Coeffs[0][i] != 1 {
+				t.Fatalf("trial %d, slot %d: after Interpolate→InvNTT, expected 1 but got %d",
+					trial, i, onesCoeff.Coeffs[0][i])
+			}
+		}
+	}
+}
+
+//--------------------------------------------------------------------------------------------------
+// TestFFTFieldOperationsAccuracy
+//
+// Now we add a suite of operations (multiply, invert, add) performed via FFT<Big> + field‐ops,
+// and compare each result against the exact “NTT‐based” result.  Any discrepancy indicates
+// bit-level inaccuracies in FFTBig/IFFTBig or in the chi-squared coeff→evaluation→coeff round-trip.
+//--------------------------------------------------------------------------------------------------
+
+func TestFFTFieldOperationsAccuracy(t *testing.T) {
+	const (
+		N    = 512
+		qMod = uint64(2013265921)
+	)
+	primeList := []uint64{qMod}
+
+	ringQ, err := ring.NewRing(N, primeList)
 	if err != nil {
-		t.Fatalf("failed to create ringQ: %v", err)
+		t.Fatalf("ring.NewRing(%d, %v) failed: %v", N, primeList, err)
 	}
 
-	prec := uint(64) // 64‐bit precision for BigFloat
+	prec := uint(128)
+	rand.Seed(time.Now().UnixNano())
 
-	for trial := 0; trial < maxTrials; trial++ {
-		// 1) Pick a random Acoeff in coefficient form mod 17.
-		Acoeff := ringQ.NewPoly()
-		for i := 0; i < nTest; i++ {
-			Acoeff.Coeffs[0][i] = uint64(rand.Intn(int(qTest)))
+	trials := 10
+	for trial := 0; trial < trials; trial++ {
+		//------------------------------------------------------------
+		// 1) Pick two random polynomials p, q ∈ R_q[x]/(x^N+1)
+		//------------------------------------------------------------
+		p := ringQ.NewPoly()
+		q := ringQ.NewPoly()
+		for i := 0; i < N; i++ {
+			p.Coeffs[0][i] = rand.Uint64() % qMod
+			q.Coeffs[0][i] = rand.Uint64() % qMod
 		}
 
-		// 2) Ensure A is invertible: compute exact inversion via NTT method.
-		AinvExactNTT, err := invertPolyNTT(Acoeff, ringQ)
-		if err != nil {
-			// If non‐invertible, skip this trial.
-			continue
-		}
+		//------------------------------------------------------------
+		// 2) EXACT polynomial multiplication via NTT:
+		//    pNTT = NTT(p), qNTT = NTT(q)
+		//    exactMulNTT = pNTT ∘ qNTT (pointwise)
+		//    InvNTT(exactMulNTT) = exactMulCoefficients
+		//------------------------------------------------------------
+		pNTT := ringQ.NewPoly()
+		qNTT := ringQ.NewPoly()
+		copy(pNTT.Coeffs[0], p.Coeffs[0])
+		copy(qNTT.Coeffs[0], q.Coeffs[0])
+		ringQ.NTT(pNTT, pNTT)
+		ringQ.NTT(qNTT, qNTT)
 
-		// 3) Compute floating‐point FFT‐based inverse:
-		AinvFFTNTT := fftInvert(Acoeff, ringQ, prec)
+		exactMulNTT := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(pNTT, qNTT, exactMulNTT)
 
-		// 4) Compare every slot of AinvExactNTT vs AinvFFTNTT.
-		//    Because NTT‐domain values must match exactly in Z_q, any difference ≠0 indicates rounding error.
-		for i := 0; i < nTest; i++ {
-			exact := AinvExactNTT.Coeffs[0][i]
-			fft := AinvFFTNTT.Coeffs[0][i]
-			if exact != fft {
-				t.Logf("trial %d, slot %d: exact inverse = %d, FFT‐inv = %d (difference = %d)",
-					trial, i, exact, fft, (fft+qTest-exact)%qTest)
-				t.Fail()
-				break
+		exactMulCoe := ringQ.NewPoly()
+		ringQ.InvNTT(exactMulNTT, exactMulCoe)
+
+		//------------------------------------------------------------
+		// 3) “FFT<Big>” polynomial multiplication:
+		//    aEval = ComplexEvaluate(p), bEval = ComplexEvaluate(q)
+		//    prodEval = FieldMulBig(aEval, bEval)
+		//    fftMulNTT = ComplexInterpolate(prodEval)
+		//    InvNTT(fftMulNTT) = fftMulCoe
+		//------------------------------------------------------------
+		aEval := ComplexEvaluate(p, ringQ, prec)
+		bEval := ComplexEvaluate(q, ringQ, prec)
+		aEval.Domain = Eval
+		bEval.Domain = Eval
+
+		prodEval := FieldMulBig(aEval, bEval) // still in Eval
+		fftMulNTT := ComplexInterpolate(prodEval, ringQ)
+
+		fftMulCoe := ringQ.NewPoly()
+		ringQ.InvNTT(fftMulNTT, fftMulCoe)
+
+		//------------------------------------------------------------
+		// 4) Compare exactMulCoe vs fftMulCoe
+		//------------------------------------------------------------
+		mismatchMul := 0
+		for i := 0; i < N; i++ {
+			if exactMulCoe.Coeffs[0][i] != fftMulCoe.Coeffs[0][i] {
+				mismatchMul++
 			}
+		}
+		if mismatchMul > 0 {
+			t.Errorf("trial %d: FFT‐based multiply mismatches at %d coefficient(s)", trial, mismatchMul)
+		} else {
+			t.Logf("trial %d: FFT‐based multiply OK", trial)
+		}
+
+		//------------------------------------------------------------
+		//    exactAddCoe = p + q (coefficient-wise mod q)
+		//    fftAddNTT = ComplexInterpolate(FieldAddBig(aEval, bEval))
+		//    fftAddCoe = InvNTT(fftAddNTT)
+		//------------------------------------------------------------
+		exactAddCoe := ringQ.NewPoly()
+		ringQ.Add(p, q, exactAddCoe)
+
+		sumEval := FieldAddBig(aEval, bEval)
+		sumNTT := ComplexInterpolate(sumEval, ringQ)
+		sumCoe := ringQ.NewPoly()
+		ringQ.InvNTT(sumNTT, sumCoe)
+
+		mismatchAdd := 0
+		for i := 0; i < N; i++ {
+			if exactAddCoe.Coeffs[0][i] != sumCoe.Coeffs[0][i] {
+				mismatchAdd++
+			}
+		}
+		if mismatchAdd > 0 {
+			t.Errorf("trial %d: FFT‐based add mismatches at %d coefficient(s)", trial, mismatchAdd)
+		} else {
+			t.Logf("trial %d: FFT‐based add OK", trial)
+		}
+	}
+}
+
+// naiveMul computes (a·b) mod (x^n+1, q) by direct convolution:
+//
+//	c_k = sum_{i+j = k} a_i b_j  −  sum_{i+j = k+n} a_i b_j   (all mod q)
+func naiveMul(a, b *ring.Poly, ringQ *ring.Ring) *ring.Poly {
+	n := ringQ.N
+	q := int64(ringQ.Modulus[0])
+	c := ringQ.NewPoly()
+	for k := 0; k < n; k++ {
+		var sum int64 = 0
+		for i := 0; i < n; i++ {
+			j := k - i
+			sign := int64(1)
+			if j < 0 {
+				j += n
+				sign = -1
+			}
+			ai := int64(a.Coeffs[0][i])
+			bj := int64(b.Coeffs[0][j])
+			sum += sign * ai * bj
+		}
+		sum %= q
+		if sum < 0 {
+			sum += q
+		}
+		c.Coeffs[0][k] = uint64(sum)
+	}
+	return c
+}
+
+// TestFFTvsExactMulSmall checks that “naïveMul” and the FFT-based approach agree
+// exactly in R = Z_97[x]/(x^16+1).  We must use ComplexEvaluateSub / ComplexInterpolateSub
+// because our ring is modulo x^n + 1, not x^n − 1.
+func TestFFTvsExactMulSmall(t *testing.T) {
+	const (
+		n16 = 16
+		q97 = uint64(97)
+	)
+
+	// Build ℤ_97[x]/(x^16+1).
+	ringR, err := ring.NewRing(n16, []uint64{q97})
+	if err != nil {
+		t.Fatalf("ring.NewRing(%d, [%d]) failed: %v", n16, q97, err)
+	}
+
+	prec := uint(64)
+	rand.Seed(time.Now().UnixNano())
+
+	const trials = 20
+	for trial := 0; trial < trials; trial++ {
+		// 1) pick two random coefficient‐polynomials a,b of length 16
+		a := ringR.NewPoly()
+		b := ringR.NewPoly()
+		for i := 0; i < n16; i++ {
+			a.Coeffs[0][i] = uint64(rand.Intn(int(q97)))
+			b.Coeffs[0][i] = uint64(rand.Intn(int(q97)))
+		}
+
+		// 2) compute cExact = naiveMul(a,b)
+		cExact := naiveMul(a, b, ringR)
+
+		// 3) compute cFFT by going “(x^n+1)→ evaluation at 2n-th roots→ interp”
+		//   3a) aEval = ComplexEvaluateSub(a,16,ringR,prec)
+		aEval := ComplexEvaluateSub(a, n16, ringR, prec)
+		bEval := ComplexEvaluateSub(b, n16, ringR, prec)
+		aEval.Domain = Eval
+		bEval.Domain = Eval
+
+		//   3b) pointwise multiply in K_{2n}:
+		prodEval := NewFieldElemBig(n16, prec)
+		for i := 0; i < n16; i++ {
+			prodEval.Coeffs[i] = aEval.Coeffs[i].Mul(bEval.Coeffs[i])
+		}
+		prodEval.Domain = Eval
+
+		//   3c) ComplexInterpolateSub(prodeval,16,ringR) → a *ring.Poly* in coeff form
+		cFFT := ComplexInterpolateSub(prodEval, n16, ringR)
+
+		// 4) compare cExact vs cFFT, coefficient‐by‐coefficient
+		var mismatches int
+		for i := 0; i < n16; i++ {
+			e := cExact.Coeffs[0][i]
+			f := cFFT.Coeffs[0][i]
+			if e != f {
+				mismatches++
+				if mismatches <= 5 {
+					t.Logf("trial %d, idx %d: naive=%d, FFT=%d", trial, i, e, f)
+				}
+			}
+		}
+		if mismatches != 0 {
+			t.Fatalf("trial %d: found %d mismatches in n=16, q=97", trial, mismatches)
 		}
 	}
 }
