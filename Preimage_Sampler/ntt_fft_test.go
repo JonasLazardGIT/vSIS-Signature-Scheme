@@ -112,7 +112,7 @@ func TestFieldInverseDiagWithNorm(t *testing.T) {
 		}
 
 		// (b) Embed into evaluation (FFT) domain:
-		aEval := ComplexEvaluate(aCoeff, ringQ, prec)
+		aEval := NegacyclicEvaluatePoly(aCoeff, ringQ, prec)
 		aEval.Domain = Eval
 
 		// (c) Compute invConj,norms := FieldInverseDiagWithNorm(aEval)
@@ -144,7 +144,7 @@ func TestFieldInverseDiagWithNorm(t *testing.T) {
 		}
 
 		// (e) Finally, apply ComplexInterpolate(prod) → get onesPolyNTT, then InvNTT → onesCoeff
-		onesPolyNTT := ComplexInterpolate(prod, ringQ)
+		onesPolyNTT := NegacyclicInterpolateElem(prod, ringQ)
 		onesCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(onesPolyNTT, onesCoeff)
 		for i := 0; i < n; i++ {
@@ -217,13 +217,13 @@ func TestFFTFieldOperationsAccuracy(t *testing.T) {
 		//    fftMulNTT = ComplexInterpolate(prodEval)
 		//    InvNTT(fftMulNTT) = fftMulCoe
 		//------------------------------------------------------------
-		aEval := ComplexEvaluate(p, ringQ, prec)
-		bEval := ComplexEvaluate(q, ringQ, prec)
+		aEval := NegacyclicEvaluatePoly(p, ringQ, prec)
+		bEval := NegacyclicEvaluatePoly(q, ringQ, prec)
 		aEval.Domain = Eval
 		bEval.Domain = Eval
 
 		prodEval := FieldMulBig(aEval, bEval) // still in Eval
-		fftMulNTT := ComplexInterpolate(prodEval, ringQ)
+		fftMulNTT := NegacyclicInterpolateElem(prodEval, ringQ)
 
 		fftMulCoe := ringQ.NewPoly()
 		ringQ.InvNTT(fftMulNTT, fftMulCoe)
@@ -252,7 +252,7 @@ func TestFFTFieldOperationsAccuracy(t *testing.T) {
 		ringQ.Add(p, q, exactAddCoe)
 
 		sumEval := FieldAddBig(aEval, bEval)
-		sumNTT := ComplexInterpolate(sumEval, ringQ)
+		sumNTT := NegacyclicInterpolateElem(sumEval, ringQ)
 		sumCoe := ringQ.NewPoly()
 		ringQ.InvNTT(sumNTT, sumCoe)
 
@@ -332,8 +332,8 @@ func TestFFTvsExactMulSmall(t *testing.T) {
 
 		// 3) compute cFFT by going “(x^n+1)→ evaluation at 2n-th roots→ interp”
 		//   3a) aEval = ComplexEvaluateSub(a,16,ringR,prec)
-		aEval := ComplexEvaluateSub(a, n16, ringR, prec)
-		bEval := ComplexEvaluateSub(b, n16, ringR, prec)
+		aEval := NegacyclicEvaluatePoly(a, ringR, prec)
+		bEval := NegacyclicEvaluatePoly(b, ringR, prec)
 		aEval.Domain = Eval
 		bEval.Domain = Eval
 
@@ -344,8 +344,7 @@ func TestFFTvsExactMulSmall(t *testing.T) {
 		}
 		prodEval.Domain = Eval
 
-		//   3c) ComplexInterpolateSub(prodeval,16,ringR) → a *ring.Poly* in coeff form
-		cFFT := ComplexInterpolateSub(prodEval, n16, ringR)
+		cFFT := NegacyclicInterpolateElem(prodEval, ringR)
 
 		// 4) compare cExact vs cFFT, coefficient‐by‐coefficient
 		var mismatches int

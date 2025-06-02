@@ -196,9 +196,9 @@ func SamplePz(
 		ePoly := ringQ.NewPoly()
 		ringQ.InvNTT(Ttilde[1][j], ePoly)
 
-		rF := ComplexEvaluate(rPoly, ringQ, prec)
+		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
 		rF.SwitchToEval(ringQ)
-		eF := ComplexEvaluate(ePoly, ringQ, prec)
+		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
 		eF.SwitchToEval(ringQ)
 
 		rT := HermitianTransposeFieldElem(rF)
@@ -367,9 +367,9 @@ func SamplePz(
 		ringQ.InvNTT(Ttilde[0][j], rPoly)
 		ePoly := ringQ.NewPoly()
 		ringQ.InvNTT(Ttilde[1][j], ePoly)
-		qF := ComplexEvaluate(qPoly, ringQ, prec)
-		rF := ComplexEvaluate(rPoly, ringQ, prec)
-		eF := ComplexEvaluate(ePoly, ringQ, prec)
+		qF := NegacyclicEvaluatePoly(qPoly, ringQ, prec)
+		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
+		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
 		rT := HermitianTransposeFieldElem(rF)
 		eT := HermitianTransposeFieldElem(eF)
 		for i := 0; i < n; i++ {
@@ -394,9 +394,9 @@ func SamplePz(
 	fmt.Printf("SamplePz: p0 = %s, p1 = %s\n", p0.Coeffs[0].Real.Text('g', 10), p1.Coeffs[0].Real.Text('g', 10))
 	// 7) Convert p0,p1 back to NTT‐domain polys
 	out := make([]*ring.Poly, expectedLength)
-	P0 := ComplexInterpolate(p0, ringQ)
+	P0 := NegacyclicInterpolateElem(p0, ringQ)
 	ringQ.NTT(P0, P0)
-	P1 := ComplexInterpolate(p1, ringQ)
+	P1 := NegacyclicInterpolateElem(p1, ringQ)
 	ringQ.NTT(P1, P1)
 	out[0], out[1] = P0, P1
 

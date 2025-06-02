@@ -217,7 +217,7 @@ func TestComplexEvalInterpolateSmall(t *testing.T) {
 	t.Run("ComplexEvaluate([1,0,...,0]) → FieldElem [1,...,1] (16 ones)", func(t *testing.T) {
 		p := ringQ.NewPoly()
 		p.Coeffs[0][0] = 1
-		f := ComplexEvaluate(p, ringQ, prec)
+		f := NegacyclicEvaluatePoly(p, ringQ, prec)
 		// Hard-coded: evaluation of p(x)=1 at 16 points is [1,1,...,1]
 		expReals := make([]string, N)
 		expImags := make([]string, N)
@@ -234,7 +234,7 @@ func TestComplexEvalInterpolateSmall(t *testing.T) {
 			f.Coeffs[i] = NewBigComplex(1, 0, prec)
 		}
 		f.Domain = Eval
-		P := ComplexInterpolate(f, ringQ)
+		P := NegacyclicInterpolateElem(f, ringQ)
 		// Hard-coded: ComplexInterpolate returns poly in NTT domain with Coeffs = [1,...,1]
 		expectedNTT := make([]uint64, N)
 		for i := 0; i < N; i++ {
