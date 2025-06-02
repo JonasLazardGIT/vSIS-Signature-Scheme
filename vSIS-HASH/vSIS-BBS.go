@@ -77,8 +77,8 @@ func ToPolyNTT(
 	ringQ *ring.Ring,
 ) (*ring.Poly, error) {
 	// 1) bring back to coefficient domain
-	elem.SwitchToCoeff(ringQ)
-	fmt.Printf("[ToPolyNTT] after SwitchToCoeff: elem.Coeffs[0] = %v + %vi\n", elem.Coeffs[0].Real, elem.Coeffs[0].Imag)
+	elem = ps.ToCoeffNegacyclic(elem, ringQ, 256)
+	fmt.Printf("[ToPolyNTT] after ToCoeffNegacyclic: elem.Coeffs[0] = %v + %vi\n", elem.Coeffs[0].Real, elem.Coeffs[0].Imag)
 
 	// 2) interpolate via IFFT → ring.Poly (coeff), then NTT
 	P := ps.ConvertToPolyBig(elem, ringQ)

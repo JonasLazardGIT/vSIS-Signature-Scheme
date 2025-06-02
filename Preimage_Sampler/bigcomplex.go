@@ -476,9 +476,9 @@ func NegacyclicEvaluatePoly(p *ring.Poly, ringQ *ring.Ring, prec uint) *Cyclotom
 	A := make([]*BigComplex, twoM)
 	for i := 0; i < m; i++ {
 		// Convert p.Coeffs[0][i] to signed int64 in [−q/2..+q/2)
-		signed := UnsignedToSigned(p.Coeffs[0][i], ringQ.Modulus[0])
+		// signed := UnsignedToSigned(p.Coeffs[0][i], ringQ.Modulus[0])
 		// lift to BigComplex
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(signed))
+		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(p.Coeffs[0][i])) //!signed
 		imBF := new(big.Float).SetPrec(prec).SetFloat64(0.0)
 		A[i] = &BigComplex{Real: reBF, Imag: imBF}
 	}
@@ -548,13 +548,15 @@ func NegacyclicInterpolateElem(f *CyclotomicFieldElem, ringQ *ring.Ring) *ring.P
 	// 2) perform length-2m inverse FFTBig (angle = +2π/(2m), then scale by 1/(2m))
 	inv := IFFTBig(A, prec) // inv has length = 2m
 
-	// 3) take the first m results (inv[0..m−1]), round each Real part to nearest integer mod q
 	P := ringQ.NewPoly()
 	q := int64(ringQ.Modulus[0])
 	for j := 0; j < m; j++ {
 		realBF := inv[j].Real
 		f64, _ := realBF.Float64()
-		rInt := int64(math.Round(f64))
+
+		// Multiply by 2 to undo the “÷2” that IFFTBig implicitly introduced ★
+		rInt := int64(math.Round(f64 * 2.0))
+
 		// reduce mod q into [0..q−1]
 		rInt = ((rInt % q) + q) % q
 		P.Coeffs[0][j] = uint64(rInt)
@@ -563,54 +565,62 @@ func NegacyclicInterpolateElem(f *CyclotomicFieldElem, ringQ *ring.Ring) *ring.P
 	return P
 }
 
-// SwitchToCoeff ensures the element is in the coefficient domain.
-func (e *CyclotomicFieldElem) SwitchToCoeff(ringQ *ring.Ring) {
-	if e.Domain == Coeff {
-		return
+// ToEvalNegacyclic converts a CyclotomicFieldElem that is currently
+// in COEFF domain into the corresponding negacyclic‐FFT “Eval” form.
+//   - e:      input in COEFF domain (BigComplex entries represent integers mod q).
+//   - ringQ:  the ring.Ring (defines n and Modulus).
+//   - prec:   desired precision (in bits) for BigFloat twiddles.
+//
+// Returns a fresh *CyclotomicFieldElem in Eval domain.
+// Panics if e.Domain != Coeff.
+func ToEvalNegacyclic(e *CyclotomicFieldElem, ringQ *ring.Ring, prec uint) *CyclotomicFieldElem {
+	if e.Domain != Coeff {
+		panic("ToEvalNegacyclic: input must be in Coeff domain")
 	}
-	// 1) Interpolate from evaluation domain back to a ring.Poly
-	poly := ConvertToPolyBig(e, ringQ)
-
-	// 2) Overwrite e.Coeffs with the polynomial coefficients (as BigComplex)
-	prec := e.Coeffs[0].Real.Prec()
-	for i := 0; i < e.N && i < ringQ.N; i++ {
-		// Convert uint64 coefficient to BigComplex
-		realVal := float64(poly.Coeffs[0][i])
-		re := new(big.Float).SetPrec(prec).SetFloat64(realVal)
-		im := new(big.Float).SetPrec(prec).SetFloat64(0)
-		e.Coeffs[i] = NewBigComplexFromFloat(re, im)
+	n := e.N
+	// 1) Build a ring.Poly by rounding each BigComplex coefficient → uint64 mod q.
+	P := ringQ.NewPoly()
+	q := int64(ringQ.Modulus[0])
+	for i := 0; i < n && i < ringQ.N; i++ {
+		// e.Coeffs[i].Real is a *big.Float that should be very close to an integer.
+		realBF := e.Coeffs[i].Real
+		f64, _ := realBF.Float64()
+		rInt := int64(math.Round(f64))
+		// reduce mod q
+		rInt = ((rInt % q) + q) % q
+		P.Coeffs[0][i] = uint64(rInt)
 	}
-
-	// 3) Mark domain
-	e.Domain = Coeff
+	// 2) Call the negacyclic evaluator (returns an element in Eval domain).
+	out := NegacyclicEvaluatePoly(P, ringQ, prec)
+	// out.Domain will be Eval already, and out.Coeffs[i] is BigComplex(evaluated at e^{-iπj/n}).
+	return out
 }
 
-// SwitchToEval ensures the element is in the evaluation (NTT) domain.
-func (e *CyclotomicFieldElem) SwitchToEval(ringQ *ring.Ring) {
-	if e.Domain == Eval {
-		return
+// ToCoeffNegacyclic converts a CyclotomicFieldElem that is currently
+// in negacyclic‐Eval domain back into a CyclotomicFieldElem in COEFF domain.
+//   - e:      input in Eval domain (BigComplex = values at 2n-roots of −1).
+//   - ringQ:  the ring.Ring (defines n and Modulus).
+//   - prec:   desired precision (in bits) for the output BigComplex coefficients.
+//
+// Returns a fresh *CyclotomicFieldElem in Coeff domain.
+// Panics if e.Domain != Eval.
+func ToCoeffNegacyclic(e *CyclotomicFieldElem, ringQ *ring.Ring, prec uint) *CyclotomicFieldElem {
+	if e.Domain != Eval {
+		panic("ToCoeffNegacyclic: input must be in Eval domain")
 	}
-	// 1) Build a ring.Poly from the coefficient-domain BigComplex values
-	P := ringQ.NewPoly()
-	for i := 0; i < e.N && i < ringQ.N; i++ {
-		realF, _ := e.Coeffs[i].Real.Float64()
-		// Round and reduce mod q
-		q0 := float64(ringQ.Modulus[0])
-		ri := int64(math.Round(realF)) % int64(q0)
-		if ri < 0 {
-			ri += int64(q0)
-		}
-		P.Coeffs[0][i] = uint64(ri)
+	n := e.N
+	// 1) Inverse‐transform via NegacyclicInterpolateElem → a ring.Poly in coefficient form.
+	P := NegacyclicInterpolateElem(e, ringQ)
+	// 2) Copy P’s uint64 coefficients into a new CyclotomicFieldElem (in Coeff domain).
+	out := NewFieldElemBig(n, prec)
+	for i := 0; i < n && i < ringQ.N; i++ {
+		// lift integer P.Coeffs[0][i] → BigFloat
+		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(P.Coeffs[0][i]))
+		imBF := new(big.Float).SetPrec(prec).SetFloat64(0.0)
+		out.Coeffs[i] = NewBigComplexFromFloat(reBF, imBF)
 	}
-
-	// 2) Convert polynomial to evaluation-domain CyclotomicFieldElem
-	evalElem := ConvertFromPolyBig(ringQ, P, e.Coeffs[0].Real.Prec())
-
-	// 3) Overwrite e.Coeffs with the FFT output
-	e.Coeffs = evalElem.Coeffs
-
-	// 4) Mark domain
-	e.Domain = Eval
+	out.Domain = Coeff
+	return out
 }
 
 // Field operations
@@ -672,15 +682,50 @@ func FieldScalarDiv(a *CyclotomicFieldElem, norm []*big.Float) *CyclotomicFieldE
 	return res
 }
 
-// HermitianTransposeFieldElem applies f^t(x).
+// HermitianTransposeFieldElem computes the “polynomial transpose” f ↦ fᵗ.
+//   - If f.Domain == Coeff:  fᵗ(x) = f₀ − fₙ₋₁·x − fₙ₋₂·x² − … − f₁·xⁿ⁻¹
+//   - If f.Domain == Eval:   fᵗ(ζ²ⁿᵏ⁺¹) = f(ζ²ⁿ⁻(²ⁿᵏ⁺¹)) = f(ζ²ⁿ⁻(²ᵏ⁺¹)) = f(ζ²(n−k−1)+1),
+//     so out.Eval[k] = in.Eval[n−k−1].
 func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 	n := f.N
-	res := NewFieldElemBig(n, f.Coeffs[0].Real.Prec())
-	for i := 0; i < n; i++ {
-		rev := (n - i) % n
-		res.Coeffs[i] = f.Coeffs[rev].Conj()
+	prec := f.Coeffs[0].Real.Prec()
+	out := NewFieldElemBig(n, prec)
+
+	switch f.Domain {
+	case Coeff:
+		// Coefficient‐space transpose:
+		//   out[0] = f[0],
+		//   out[i] = − f[n−i],   for i = 1..n−1
+		for i := 0; i < n; i++ {
+			if i == 0 {
+				// copy f.Coeffs[0] exactly
+				out.Coeffs[0] = f.Coeffs[0].Copy()
+			} else {
+				// take f.Coeffs[n−i], multiply by −1
+				src := f.Coeffs[n-i]
+				negReal := new(big.Float).SetPrec(prec).Neg(src.Real)
+				negImag := new(big.Float).SetPrec(prec).Neg(src.Imag)
+				out.Coeffs[i] = &BigComplex{
+					Real: negReal,
+					Imag: negImag,
+				}
+			}
+		}
+		out.Domain = Coeff
+
+	case Eval:
+		// Evaluation‐space transpose = “automorphism by 2n−1”:
+		//   out.Eval[k] = f.Eval[n−k−1].  (no extra conjugation here)
+		for k := 0; k < n; k++ {
+			// f.Coeffs[n−k−1] is already a *BigComplex; copy it
+			out.Coeffs[k] = f.Coeffs[n-k-1].Copy()
+		}
+		out.Domain = Eval
+
+	default:
+		panic("HermitianTransposeFieldElem: unknown domain")
 	}
-	return res
+	return out
 }
 
 // Field inverse with norms.

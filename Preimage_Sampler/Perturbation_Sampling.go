@@ -20,20 +20,20 @@ func Sample2zField(
 ) (q0, q1 *CyclotomicFieldElem) {
 
 	// 1) draw q1 ← SampleFZBig(d, c1)
-	dCoeff := d.Copy()
-	dCoeff.SwitchToCoeff(ringQ)
+	dCoeff := ToCoeffNegacyclic(d, ringQ, prec) // d is in EVAL, convert to COEFF
 	// fmt.Printf("Sample2zField: d = %s\n", dCoeff.Coeffs[0].Real.Text('g', 10))
 	// fmt.Printf("Sample2zField: c1 = %s\n", c1.Coeffs[0].Real.Text('g', 10))
 	q1 = SampleFZBig(dCoeff, c1, ringQ, prec)
 
 	// 2) delta = q1 – c1  (both in COEFF), then lift to EVAL
 	delta := FieldSubBig(q1, c1)
-	delta.SwitchToEval(ringQ)
+
+	delta = ToEvalNegacyclic(delta, ringQ, prec) // delta is now in EVAL
 
 	// 3) invD = conj(d) / |d|²   (remains in EVAL)
 	invD, norms := FieldInverseDiagWithNorm(d)
 	invD = FieldScalarDiv(invD, norms)
-	invD.SwitchToEval(ringQ)
+	invD.Domain = Eval
 
 	tmp := FieldMulBig(invD, delta)
 	tmp.Domain = Eval
@@ -41,16 +41,14 @@ func Sample2zField(
 
 	// scaledDelta.Coeffs is still Eval‐domain; fix the flag:
 	scaledDelta.Domain = Eval
-	scaledDelta.SwitchToCoeff(ringQ)
+	scaledDelta = ToCoeffNegacyclic(scaledDelta, ringQ, prec)
 
 	// 5) c0′ = c0 + scaledDelta   (all COEFF)
 	c0p := FieldAddBig(c0, scaledDelta)
 
 	// 6) cond = b ⋅ d⁻¹ ⋅ bᵀ  (compute in EVAL, then to COEFF)
 	//   - form true Hermitian transpose of b in EVAL
-	Bcopy := b.Copy()                             // b is EVAL
-	Bhermit := HermitianTransposeFieldElem(Bcopy) // conj+reverse, Domain=Coeff
-	Bhermit.SwitchToEval(ringQ)                   // now Domain=Eval
+	Bhermit := HermitianTransposeFieldElem(b) // now Domain=Eval
 
 	// - multiply out in EVAL
 	tmpCond := FieldMulBig(invD, Bhermit)
@@ -58,11 +56,11 @@ func Sample2zField(
 
 	condEval := FieldMulBig(b, tmpCond)
 	condEval.Domain = Eval
-	condEval.SwitchToCoeff(ringQ)
+	condEval = ToCoeffNegacyclic(condEval, ringQ, prec) // now Domain=Coeff
 
 	// 7) aPr = a – cond   (both in COEFF)
 	aPr := a.Copy()
-	aPr.SwitchToCoeff(ringQ)
+	aPr = ToCoeffNegacyclic(aPr, ringQ, prec) // a is in EVAL, convert to COEFF
 	aPr = FieldSubBig(aPr, condEval)
 
 	// 8) q0 ← SampleFZBig(aPr, c0′)
@@ -99,19 +97,24 @@ func SampleFZBig(
 	// 1) split even/odd parts
 	f0 := f.Copy().ExtractEven()
 	f1 := f.Copy().ExtractOdd()
-	f0.SwitchToEval(ringQ)
-	f1.SwitchToEval(ringQ)
+	ringQhalf := makeSmallRing(m/2, ringQ.Modulus[0])
+	f0 = ToEvalNegacyclic(f0, ringQhalf, prec) // f0 is in EVAL
+	f1 = ToEvalNegacyclic(f1, ringQhalf, prec) // f1 is in EVAL
 
 	// 2) permute centers
 	c0 := c.Copy().ExtractEven()
+	fmt.Printf("Dimension of c = %d\n", c.N)
+	fmt.Printf("Dimension of c0 = %d\n", c0.N)
 	c1 := c.Copy().ExtractOdd()
+	fmt.Printf("Dimension of c1 = %d\n", c1.N)
+	fmt.Printf("Calling set coeffs on c0, c1 with m/2 =%d \n", m/2)
 
 	// 3) two-block sample returns *two* halves
 	q0, q1 := Sample2zField(
 		f0, f1, f0,
 		NewFieldElemBig(m/2, prec).SetCoeffs(c0),
 		NewFieldElemBig(m/2, prec).SetCoeffs(c1),
-		ringQ, prec,
+		ringQhalf, prec,
 	)
 
 	// 4) pack them into one length-m element
@@ -185,9 +188,9 @@ func SamplePz(
 	}
 
 	// 3) Accumulate Σ r̂ᵀr̂, Σ r̂ᵀê, Σ êᵀê, each multiplied by z
-	aFld.SwitchToEval(ringQ)
-	bFld.SwitchToEval(ringQ)
-	dFld.SwitchToEval(ringQ)
+	aFld = ToEvalNegacyclic(aFld, ringQ, prec) // aFld is now in EVAL
+	bFld = ToEvalNegacyclic(bFld, ringQ, prec) // bFld is now in EVAL
+	dFld = ToEvalNegacyclic(dFld, ringQ, prec) // dFld is now in EVAL
 
 	for j := 0; j < k; j++ {
 		// back to coeff domain
@@ -197,9 +200,9 @@ func SamplePz(
 		ringQ.InvNTT(Ttilde[1][j], ePoly)
 
 		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
-		rF.SwitchToEval(ringQ)
+		// rF = ToEvalNegacyclic(rF, ringQ, prec) // rF is now in EVAL
 		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
-		eF.SwitchToEval(ringQ)
+		// eF = ToEvalNegacyclic(eF, ringQ, prec) // eF is now in EVAL
 
 		rT := HermitianTransposeFieldElem(rF)
 		eT := HermitianTransposeFieldElem(eF)
@@ -360,6 +363,7 @@ func SamplePz(
 
 	c0 := NewFieldElemBig(n, prec)
 	c1 := NewFieldElemBig(n, prec)
+
 	for j := 0; j < k; j++ {
 		qPoly := ringQ.NewPoly()
 		ringQ.InvNTT(qhat[j], qPoly)
@@ -379,11 +383,12 @@ func SamplePz(
 	}
 	c0 = FieldScalarMulBig(c0, scaleC)
 	c1 = FieldScalarMulBig(c1, scaleC)
+	c0.Domain = Eval
+	c1.Domain = Eval
+	// c0, c1 are now in EVAL domain, but we need them in COEFF
+	c0 = ToCoeffNegacyclic(c0, ringQ, prec) // c0 is now in COEFF
+	c1 = ToCoeffNegacyclic(c1, ringQ, prec) // c1 is now in COEFF
 	fmt.Printf("SamplePz: c0 = %s, c1 = %s\n", c0.Coeffs[0].Real.Text('g', 10), c1.Coeffs[0].Real.Text('g', 10))
-	// after building aFld,bFld,dFld via accumulation
-	aFld.SwitchToEval(ringQ)
-	bFld.SwitchToEval(ringQ)
-	dFld.SwitchToEval(ringQ)
 
 	// 6) Final 2×2 block‐recursive sample → p0,p1
 	p0, p1 := Sample2zField(
@@ -405,4 +410,13 @@ func SamplePz(
 		out[j+2] = qhat[j]
 	}
 	return out
+}
+
+// makeSmallRing returns a *ring.Ring of degree N (a power of two) and modulus q.
+func makeSmallRing(N int, q uint64) *ring.Ring {
+	r, err := ring.NewRing(N, []uint64{q})
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
