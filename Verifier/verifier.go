@@ -132,7 +132,7 @@ func Verify() bool {
 	var sumSq float64
 	for i, p := range SEval {
 		coef := ringQ.NewPoly()
-		ringQ.InvNTT(coef, p)
+		ringQ.InvNTT(p, coef)
 		for j, c := range coef.Coeffs[0] {
 			var v int64
 			if c > pp.Q/2 {
