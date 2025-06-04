@@ -476,9 +476,9 @@ func NegacyclicEvaluatePoly(p *ring.Poly, ringQ *ring.Ring, prec uint) *Cyclotom
 	A := make([]*BigComplex, twoM)
 	for i := 0; i < m; i++ {
 		// Convert p.Coeffs[0][i] to signed int64 in [−q/2..+q/2)
-		// signed := UnsignedToSigned(p.Coeffs[0][i], ringQ.Modulus[0])
+		signed := UnsignedToSigned(p.Coeffs[0][i], ringQ.Modulus[0])
 		// lift to BigComplex
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(p.Coeffs[0][i])) //!signed
+		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(signed)) //!signed
 		imBF := new(big.Float).SetPrec(prec).SetFloat64(0.0)
 		A[i] = &BigComplex{Real: reBF, Imag: imBF}
 	}
@@ -720,8 +720,7 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 			out.Coeffs[k] = &BigComplex{
 				// copy the real part unchanged
 				Real: new(big.Float).SetPrec(prec).Copy(src.Real),
-				// but NEGATE the imaginary part to effect conjugation
-				Imag: new(big.Float).SetPrec(prec).Neg(src.Imag),
+				Imag: new(big.Float).SetPrec(prec).Copy(src.Imag),
 			}
 		}
 		out.Domain = Eval

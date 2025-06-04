@@ -8,7 +8,7 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
-// baseDigitsSigned decomposes v (which may be negative) into k little-endian
+// baseDigits decomposes v (which may be negative) into k little-endian
 // base-t digits, each in [0,base).
 func baseDigits(v int64, base int64, k int) []int64 {
 	digits := make([]int64, k)
