@@ -209,11 +209,9 @@ func SamplePz(
 	bFld := NewFieldElemBig(n, prec)
 	dFld := NewFieldElemBig(n, prec)
 	// set a = s², d = s²
-	for i := 0; i < n; i++ {
-		s2c := NewBigComplexFromFloat(s2, big.NewFloat(0).SetPrec(prec))
-		aFld.Coeffs[i] = s2c.Copy()
-		dFld.Coeffs[i] = s2c.Copy()
-	}
+	s2c := NewBigComplexFromFloat(s2, big.NewFloat(0).SetPrec(prec))
+	aFld.Coeffs[0] = s2c.Copy()
+	dFld.Coeffs[0] = s2c.Copy()
 
 	// 3) Accumulate Σ r̂ᵀr̂, Σ r̂ᵀê, Σ êᵀê, each multiplied by z
 	aFld = FloatToEvalNegacyclic(aFld, prec)

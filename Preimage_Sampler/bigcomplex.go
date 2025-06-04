@@ -715,12 +715,18 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 
 	case Eval:
 		// out.Eval[k] = conj( in.Eval[n−k−1] )
+		m := 2 * n
 		for k := 0; k < n; k++ {
-			src := f.Coeffs[n-k-1]
-			out.Coeffs[k] = &BigComplex{
-				// copy the real part unchanged
+			// original odd index j = 2k+1
+			j := 2*k + 1
+			// target odd index j' = (m - j) mod m
+			jj := (m - j) % m  // always odd
+			kp := (jj - 1) / 2 // slot after automorphism
+
+			src := f.Coeffs[k]
+			out.Coeffs[kp] = &BigComplex{
 				Real: new(big.Float).SetPrec(prec).Copy(src.Real),
-				Imag: new(big.Float).SetPrec(prec).Copy(src.Imag),
+				Imag: new(big.Float).SetPrec(prec).Neg(src.Imag), // conjugate!
 			}
 		}
 		out.Domain = Eval
