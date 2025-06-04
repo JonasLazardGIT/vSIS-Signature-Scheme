@@ -306,7 +306,7 @@ func TestFieldArithmeticSmall(t *testing.T) {
 		}
 	}
 
-	// HermitianTranspose: fᵗ(x) = f₀ − fₙ₋₁ x − fₙ₋₂ x² − … − f₁ xⁿ⁻¹
+	// HermitianTranspose (Coefficient domain):
 	e := NewFieldElemBig(n, prec)
 	for i := 0; i < n; i++ {
 		e.Coeffs[i] = NewBigComplex(float64(i+1), float64(i+2), prec)
@@ -332,23 +332,23 @@ func TestFieldArithmeticSmall(t *testing.T) {
 		rHT, _ := ht.Coeffs[i].Real.Float64()
 		iHT, _ := ht.Coeffs[i].Imag.Float64()
 		if !approxEqual(rHT, wantR, 1e-15) || !approxEqual(iHT, wantI, 1e-15) {
-			t.Fatalf("HermitianTranspose: index %d: got %v + %vi, want %v + %vi",
+			t.Fatalf("HermitianTranspose (Coeff): index %d: got %v + %vi, want %v + %vi",
 				i, rHT, iHT, wantR, wantI)
 		}
 	}
 
-	// PstrideBig: split even/odd.  For e = [1,2,3,4], f0=[1,3], f1=[2,4]
+	// Test PstrideBig: split even/odd.  For e = [1,2,3,4], f0=[1,3], f1=[2,4]
 	e2 = NewFieldElemBig(n, prec)
 	for i := 0; i < n; i++ {
 		e2.Coeffs[i] = NewBigComplex(float64(i+1), 0, prec)
 	}
-	f0, f1 := PstrideBig(e2)
-	if f0.N != n/2 || f1.N != n/2 {
-		t.Fatalf("PstrideBig: wrong lengths: got %d,%d want %d,%d", f0.N, f1.N, n/2, n/2)
+	fe, fo := PstrideBig(e2)
+	if fe.N != n/2 || fo.N != n/2 {
+		t.Fatalf("PstrideBig: wrong lengths: got %d,%d want %d,%d", fe.N, fo.N, n/2, n/2)
 	}
 	for i := 0; i < n/2; i++ {
-		r0, _ := f0.Coeffs[i].Real.Float64()
-		r1, _ := f1.Coeffs[i].Real.Float64()
+		r0, _ := fe.Coeffs[i].Real.Float64()
+		r1, _ := fo.Coeffs[i].Real.Float64()
 		want0 := float64(2*i + 1) // indices 0,2,4,6...
 		want1 := float64(2*i + 2) // indices 1,3,5,7...
 		if !approxEqual(r0, want0, 1e-15) || !approxEqual(r1, want1, 1e-15) {
@@ -423,12 +423,12 @@ func TestFieldArithmeticSmall(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		f.Coeffs[i] = NewBigComplex(float64((i+1)*10), 0, prec)
 	}
-	fe, fo := PstrideBig(f)
-	// fe = [10,30], fo = [20,40]
+	fe2, fo2 := PstrideBig(f)
+	// fe2 = [10,30], fo2 = [20,40]
 	interleaved := NewFieldElemBig(4, prec)
 	for i := 0; i < 2; i++ {
-		interleaved.Coeffs[i] = fe.Coeffs[i]
-		interleaved.Coeffs[i+2] = fo.Coeffs[i]
+		interleaved.Coeffs[i] = fe2.Coeffs[i]
+		interleaved.Coeffs[i+2] = fo2.Coeffs[i]
 	}
 	InversePermuteFieldElem(interleaved)
 	// Now interleaved should be [10,20,30,40]
@@ -518,7 +518,6 @@ func TestSwitchToEvalAndBack(t *testing.T) {
 	}
 
 	// Overwrite coeffElem with fEval.Coeffs and set its Domain=Eval
-	// Overwrite coeffElem with fEval.Coeffs and set its Domain=Eval
 	coeffElem.Coeffs = fEval.Coeffs
 	coeffElem.Domain = Eval
 
@@ -607,12 +606,171 @@ func TestInversePermuteFieldElemAlone(t *testing.T) {
 	}
 }
 
-// TestComplexFieldLoop exercises several “big‐complex” field operations under the
-// negacyclic (xⁿ + 1) setting. We generate random polynomials P of degree < n,
-// convert them to Eval (negacyclic) domain, multiply/invert/add in that domain,
-// convert back, and compare against naive coefficient‐domain arithmetic modulo xⁿ+1.
-//
-// Uses ring degree n=16 and modulus q=97. Runs multiple random trials.
+// ---------------------------------------------------------------------------------------------------------------------
+// 11) HermitianTranspose in Eval domain vs. direct Coeff transpose
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestHermitianTransposeEvalConsistency(t *testing.T) {
+	rand.Seed(2024)
+	const prec = uint(64)
+	const q = uint64(97)
+	const n = 16
+
+	ringQ := makeSmallRing(n, q)
+
+	for trial := 0; trial < 5; trial++ {
+		// 1) Pick a random real-coeff polynomial P in R = Z_q[x]/(x^n+1)
+		P := ringQ.NewPoly()
+		for i := 0; i < n; i++ {
+			P.Coeffs[0][i] = uint64(rand.Intn(int(q)))
+		}
+
+		// 2) Compute its direct Coeff-domain transpose Q_coeff:
+		//    Q_coeff[0] = P[0], Q_coeff[i] = q - P[n-i]  (mod q), for i=1..n-1
+		Q_coeff := ringQ.NewPoly()
+		Q_coeff.Coeffs[0][0] = P.Coeffs[0][0] % q
+		for i := 1; i < n; i++ {
+			qi := P.Coeffs[0][n-i] % q
+			if qi != 0 {
+				Q_coeff.Coeffs[0][i] = (q - qi) % q
+			} else {
+				Q_coeff.Coeffs[0][i] = 0
+			}
+		}
+
+		// 3) Convert P to a FieldElem in Eval:
+		coeffElem := NewFieldElemBig(n, prec)
+		for i := 0; i < n; i++ {
+			val := float64(P.Coeffs[0][i])
+			coeffElem.Coeffs[i] = NewBigComplex(val, 0, prec)
+		}
+		coeffElem.Domain = Coeff
+		fEval := ToEvalNegacyclic(coeffElem, ringQ, prec) // Domain=Eval
+
+		// 4) Apply HermitianTransposeFieldElem in Eval:
+		htEval := HermitianTransposeFieldElem(fEval)
+		if htEval.Domain != Eval {
+			t.Fatalf("HermitianTransposeFieldElem did not return Eval-domain; got %v", htEval.Domain)
+		}
+
+		// 5) Convert htEval back to Coeff:
+		htCoeff := ToCoeffNegacyclic(htEval, ringQ, prec)
+
+		// 6) Compare htCoeff to Q_coeff
+		for i := 0; i < n; i++ {
+			got, _ := htCoeff.Coeffs[i].Real.Float64()
+			want := float64(Q_coeff.Coeffs[0][i])
+			if got != want {
+				t.Fatalf("Trial %d: HermitianTranspose Eval mismatch at %d: got %f, want %f", trial, i, got, want)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 12) Test FieldInverseDiagWithNorm & FieldScalarDiv (invD check) in isolation
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestInverseDiagAndScalarDiv(t *testing.T) {
+	rand.Seed(12345)
+	const prec = uint(64)
+	const q = uint64(97)
+	const n = 16
+
+	ringQ := makeSmallRing(n, q)
+
+	for trial := 0; trial < 5; trial++ {
+		// 1) Pick a random polynomial P in R = Z_q[x]/(x^n+1)
+		P := ringQ.NewPoly()
+		for i := 0; i < n; i++ {
+			P.Coeffs[0][i] = uint64(rand.Intn(int(q)))
+		}
+
+		// 2) Convert P to a FieldElem in Eval:
+		coeffElem := NewFieldElemBig(n, prec)
+		for i := 0; i < n; i++ {
+			val := float64(P.Coeffs[0][i])
+			coeffElem.Coeffs[i] = NewBigComplex(val, 0, prec)
+		}
+		coeffElem.Domain = Coeff
+		fEval := ToEvalNegacyclic(coeffElem, ringQ, prec) // Domain=Eval
+
+		// 3) Compute invD, norms := FieldInverseDiagWithNorm(fEval),
+		//    then invEval := FieldScalarDiv(invD, norms)
+		invD, norms := FieldInverseDiagWithNorm(fEval)
+		invEval := FieldScalarDiv(invD, norms)
+		invEval.Domain = Eval
+
+		// 4) Check inv: fEval * invEval = 1 (pointwise)
+		prod := FieldMulBig(fEval, invEval)
+		for i := 0; i < n; i++ {
+			r, _ := prod.Coeffs[i].Real.Float64()
+			im, _ := prod.Coeffs[i].Imag.Float64()
+			if !approxEqual(r, 1.0, 1e-9) || !approxEqual(im, 0.0, 1e-9) {
+				t.Fatalf("Trial %d: inversion failed at slot %d: got %v+%vi, want 1+0i", trial, i, r, im)
+			}
+		}
+
+		// 5) Check norms: norms[i] = fEval.Coeffs[i].Real^2 + fEval.Coeffs[i].Imag^2
+		for i := 0; i < n; i++ {
+			// recompute abs^2 of fEval
+			rf, _ := fEval.Coeffs[i].Real.Float64()
+			ifm, _ := fEval.Coeffs[i].Imag.Float64()
+			wantNorm := rf*rf + ifm*ifm
+
+			gotNorm, _ := norms[i].Float64()
+			if !approxEqual(gotNorm, wantNorm, 1e-9) {
+				t.Fatalf("Trial %d: norms mismatch at slot %d: got %v, want %v", trial, i, gotNorm, wantNorm)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 13) Test RingFreeToCoeffNegacyclic / ToCoeffNegacyclic inversion correctness
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestRingFreeToCoeffNegacyclicInversion(t *testing.T) {
+	rand.Seed(555)
+	const prec = uint(64)
+	const q = uint64(97)
+	const n = 16
+
+	ringQ := makeSmallRing(n, q)
+
+	for trial := 0; trial < 5; trial++ {
+		// 1) Pick a random polynomial P in R = Z_q[x]/(x^n+1)
+		P := ringQ.NewPoly()
+		for i := 0; i < n; i++ {
+			P.Coeffs[0][i] = uint64(rand.Intn(int(q)))
+		}
+
+		// 2) Convert P to a FieldElem in Eval via ToEvalNegacyclic
+		coeffElem := NewFieldElemBig(n, prec)
+		for i := 0; i < n; i++ {
+			val := float64(P.Coeffs[0][i])
+			coeffElem.Coeffs[i] = NewBigComplex(val, 0, prec)
+		}
+		coeffElem.Domain = Coeff
+		fEval := ToEvalNegacyclic(coeffElem, ringQ, prec)
+
+		// 3) Now convert fEval back via RingFreeToCoeffNegacyclic
+		back := RingFreeToCoeffNegacyclic(fEval, n, q, prec)
+		// Compare back.Coeffs[i].Real to original P.Coeffs[0][i]
+		for i := 0; i < n; i++ {
+			got, _ := back.Coeffs[i].Real.Float64()
+			want := float64(P.Coeffs[0][i])
+			if !approxEqual(got, want, 1e-9) {
+				t.Fatalf("Trial %d: RingFreeToCoeffNegacyclic mismatch at %d: got %v, want %v", trial, i, got, want)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 14) ComplexFieldLoop: full Eval arithmetic vs. naive coefficient arithmetic, extended
+// ---------------------------------------------------------------------------------------------------------------------
+
 func TestComplexFieldLoop(t *testing.T) {
 	rand.Seed(2025)
 	const prec = uint(64)
@@ -698,6 +856,39 @@ func TestComplexFieldLoop(t *testing.T) {
 			if got != want {
 				t.Fatalf("trial %d, mul round‐trip: index %d: got %v, want %v", trial, i, got, want)
 			}
+		}
+	}
+
+}
+
+func TestNTTInvNTTNoScale(t *testing.T) {
+	const n = 16
+	const q = uint64(97)
+
+	// Build a ring of degree 16, modulus 97 (97 ≡ 1 mod 2·16)
+	ringQ := makeSmallRing(n, q)
+
+	// Create a polynomial P with deterministic coeffs [1,2,3,…,16]
+	P := ringQ.NewPoly()
+	for i := 0; i < n; i++ {
+		P.Coeffs[0][i] = uint64(i + 1)
+	}
+
+	// Copy P to Pcopy for later comparison
+	Pcopy := ringQ.NewPoly()
+	for i := 0; i < n; i++ {
+		Pcopy.Coeffs[0][i] = P.Coeffs[0][i]
+	}
+
+	// Apply NTT then InvNTT in place
+	ringQ.NTT(P, P)
+	ringQ.InvNTT(P, P)
+
+	// After NTT→InvNTT, P should match Pcopy exactly (no scaling factor)
+	for i := 0; i < n; i++ {
+		if P.Coeffs[0][i] != Pcopy.Coeffs[0][i] {
+			t.Fatalf("NTT/InvNTT mismatch at index %d: got %d, want %d",
+				i, P.Coeffs[0][i], Pcopy.Coeffs[0][i])
 		}
 	}
 }

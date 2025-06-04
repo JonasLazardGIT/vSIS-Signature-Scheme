@@ -12,9 +12,9 @@ import (
 // calculateParams computes σₜ=(t+1)σ and
 // s > 1.3·σ·σₜ·√(n·κ + 2·n + 4.7), with σ≈4.578 from Sec. V-A1.
 func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
-	sigma := 0.8                     //3.19                    // smoothing parameter from Sec V-A1
+	sigma := 3.19                    //3.19                    // smoothing parameter from Sec V-A1
 	sigmaT = float64(base+1) * sigma // σₜ = (t+1)·σ
-	C0, C1 := 0.015, 4.7
+	C0, C1 := 1.5, 4.7
 	// s > C0·σ·σₜ·√(n·κ + 2n + C1)
 	s = C0 * sigma * sigmaT * math.Sqrt(float64(n*k+2*n)+C1)
 	return

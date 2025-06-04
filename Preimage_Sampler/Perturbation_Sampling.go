@@ -15,33 +15,62 @@ import (
 func Sample2zField(
 	a, b, d *CyclotomicFieldElem, // in EVAL domain
 	c0, c1 *CyclotomicFieldElem, // in COEFF domain
-	ringQ *ring.Ring,
+	n int,
+	modulus uint64,
 	prec uint,
 ) (q0, q1 *CyclotomicFieldElem) {
 
 	// 1) draw q1 ← SampleFZBig(d, c1)
-	dCoeff := ToCoeffNegacyclic(d, ringQ, prec) // d is in EVAL, convert to COEFF
+	dCoeff := RingFreeToCoeffNegacyclic(d, n, modulus, prec) // d is in EVAL, convert to COEFF
 	// fmt.Printf("Sample2zField: d = %s\n", dCoeff.Coeffs[0].Real.Text('g', 10))
 	// fmt.Printf("Sample2zField: c1 = %s\n", c1.Coeffs[0].Real.Text('g', 10))
-	q1 = SampleFZBig(dCoeff, c1, ringQ, prec)
+	q1 = SampleFZBig(dCoeff, c1, modulus, prec)
 
 	// 2) delta = q1 – c1  (both in COEFF), then lift to EVAL
 	delta := FieldSubBig(q1, c1)
 
-	delta = ToEvalNegacyclic(delta, ringQ, prec) // delta is now in EVAL
+	delta = RingFreeToEvalNegacyclic(delta, n, modulus, prec) // delta is now in EVAL
 
 	// 3) invD = conj(d) / |d|²   (remains in EVAL)
 	invD, norms := FieldInverseDiagWithNorm(d)
 	invD = FieldScalarDiv(invD, norms)
 	invD.Domain = Eval
 
+	//! Verify that invD is truly the inverse of d (i.e. d * invD ≈ 1 in Eval)
+	prod := FieldMulBig(d, invD) // pointwise product in Eval
+	prod.Domain = Eval
+
+	// Build a “1 + 0i” constant for comparison
+	oneReal := new(big.Float).SetPrec(prec).SetFloat64(1.0)
+	zero := new(big.Float).SetPrec(prec).SetFloat64(0.0)
+	one := &BigComplex{Real: oneReal, Imag: zero}
+
+	// Tolerance for big.Float comparison (adjust as needed)
+	tol := new(big.Float).SetPrec(prec).SetFloat64(1e-30)
+
+	for i := 0; i < n; i++ {
+		// compute difference prod.Coeffs[i] − (1 + 0i)
+		diffReal := new(big.Float).Sub(prod.Coeffs[i].Real, one.Real)
+		diffImag := new(big.Float).Sub(prod.Coeffs[i].Imag, one.Imag)
+
+		// take absolute values
+		absReal := new(big.Float).Abs(diffReal)
+		absImag := new(big.Float).Abs(diffImag)
+
+		if absReal.Cmp(tol) > 0 || absImag.Cmp(tol) > 0 {
+			log.Panicf("invD check failed at index %d: d*invD = %s + %si", i,
+				prod.Coeffs[i].Real.Text('g', 10),
+				prod.Coeffs[i].Imag.Text('g', 10))
+		}
+	}
+	//! End of invD sanity check
 	tmp := FieldMulBig(invD, delta)
 	tmp.Domain = Eval
 	scaledDelta := FieldMulBig(b, tmp)
 
 	// scaledDelta.Coeffs is still Eval‐domain; fix the flag:
 	scaledDelta.Domain = Eval
-	scaledDelta = ToCoeffNegacyclic(scaledDelta, ringQ, prec)
+	scaledDelta = RingFreeToCoeffNegacyclic(scaledDelta, n, modulus, prec)
 
 	// 5) c0′ = c0 + scaledDelta   (all COEFF)
 	c0p := FieldAddBig(c0, scaledDelta)
@@ -56,24 +85,25 @@ func Sample2zField(
 
 	condEval := FieldMulBig(b, tmpCond)
 	condEval.Domain = Eval
-	condEval = ToCoeffNegacyclic(condEval, ringQ, prec) // now Domain=Coeff
+	condEval = RingFreeToCoeffNegacyclic(condEval, n, modulus, prec) // now Domain=Coeff
 
 	// 7) aPr = a – cond   (both in COEFF)
 	aPr := a.Copy()
-	aPr = ToCoeffNegacyclic(aPr, ringQ, prec) // a is in EVAL, convert to COEFF
+	aPr = RingFreeToCoeffNegacyclic(aPr, n, modulus, prec) // a is in EVAL, convert to COEFF
 	aPr = FieldSubBig(aPr, condEval)
 
 	// 8) q0 ← SampleFZBig(aPr, c0′)
-	// fmt.Printf("Sample2zField: aPr = %s\n", aPr.Coeffs[0].Real.Text('g', 10))
-	// fmt.Printf("Sample2zField: c0′ = %s\n", c0p.Coeffs[0].Real.Text('g', 10))
-	q0 = SampleFZBig(aPr, c0p, ringQ, prec)
+	fmt.Printf("Sample2zField: aPr = %s\n", aPr.Coeffs[0].Real.Text('g', 10))
+	fmt.Printf("Sample2zField: c0′ = %s\n", c0p.Coeffs[0].Real.Text('g', 10))
+
+	q0 = SampleFZBig(aPr, c0p, modulus, prec)
 	return
 }
 
 func SampleFZBig(
 	f *CyclotomicFieldElem, // in COEFF domain
 	c *CyclotomicFieldElem, // in COEFF domain
-	ringQ *ring.Ring,
+	modulus uint64, // modulus of the ring Q
 	prec uint,
 ) *CyclotomicFieldElem {
 	m := f.N
@@ -83,7 +113,7 @@ func SampleFZBig(
 		varv, _ := f.Coeffs[0].Real.Float64()
 		// fmt.Printf("SampleFZBig: varv = %f\n", varv)
 		if varv < 0 {
-			fmt.Printf("SampleFZBig: varv < 0\n PANIC\n")
+			fmt.Printf("SampleFZBig: varv = %f < 0\n PANIC\n", varv)
 		}
 		std := math.Sqrt(varv)
 		mean, _ := c.Coeffs[0].Real.Float64()
@@ -97,30 +127,28 @@ func SampleFZBig(
 	// 1) split even/odd parts
 	f0 := f.Copy().ExtractEven()
 	f1 := f.Copy().ExtractOdd()
-	ringQhalf := makeSmallRing(m/2, ringQ.Modulus[0])
-	f0 = ToEvalNegacyclic(f0, ringQhalf, prec) // f0 is in EVAL
-	f1 = ToEvalNegacyclic(f1, ringQhalf, prec) // f1 is in EVAL
+	half := m / 2
+	f0 = RingFreeToEvalNegacyclic(f0, half, modulus, prec)
+	f1 = RingFreeToEvalNegacyclic(f1, half, modulus, prec)
 
 	// 2) permute centers
 	c0 := c.Copy().ExtractEven()
-	fmt.Printf("Dimension of c = %d\n", c.N)
-	fmt.Printf("Dimension of c0 = %d\n", c0.N)
 	c1 := c.Copy().ExtractOdd()
-	fmt.Printf("Dimension of c1 = %d\n", c1.N)
-	fmt.Printf("Calling set coeffs on c0, c1 with m/2 =%d \n", m/2)
 
 	// 3) two-block sample returns *two* halves
 	q0, q1 := Sample2zField(
 		f0, f1, f0,
 		NewFieldElemBig(m/2, prec).SetCoeffs(c0),
 		NewFieldElemBig(m/2, prec).SetCoeffs(c1),
-		ringQhalf, prec,
+		half,
+		modulus, prec,
 	)
 
 	// 4) pack them into one length-m element
 	out := NewFieldElemBig(m, prec)
 	for i := 0; i < m/2; i++ {
 		out.Coeffs[i] = q0.Coeffs[i]
+
 		out.Coeffs[i+m/2] = q1.Coeffs[i]
 	}
 
@@ -394,7 +422,7 @@ func SamplePz(
 	p0, p1 := Sample2zField(
 		aFld, bFld, dFld,
 		c0, c1,
-		ringQ, prec,
+		ringQ.N, ringQ.Modulus[0], prec,
 	)
 	fmt.Printf("SamplePz: p0 = %s, p1 = %s\n", p0.Coeffs[0].Real.Text('g', 10), p1.Coeffs[0].Real.Text('g', 10))
 	// 7) Convert p0,p1 back to NTT‐domain polys

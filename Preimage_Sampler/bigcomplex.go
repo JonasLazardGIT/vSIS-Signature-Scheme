@@ -714,11 +714,15 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 		out.Domain = Coeff
 
 	case Eval:
-		// Evaluation‐space transpose = “automorphism by 2n−1”:
-		//   out.Eval[k] = f.Eval[n−k−1].  (no extra conjugation here)
+		// out.Eval[k] = conj( in.Eval[n−k−1] )
 		for k := 0; k < n; k++ {
-			// f.Coeffs[n−k−1] is already a *BigComplex; copy it
-			out.Coeffs[k] = f.Coeffs[n-k-1].Copy()
+			src := f.Coeffs[n-k-1]
+			out.Coeffs[k] = &BigComplex{
+				// copy the real part unchanged
+				Real: new(big.Float).SetPrec(prec).Copy(src.Real),
+				// but NEGATE the imaginary part to effect conjugation
+				Imag: new(big.Float).SetPrec(prec).Neg(src.Imag),
+			}
 		}
 		out.Domain = Eval
 
@@ -952,17 +956,6 @@ func RingFreeToEvalNegacyclic(
 		rInt = ((rInt % bigQ) + bigQ) % bigQ
 		polyCoeffs[i] = uint64(rInt)
 	}
-
-	// 2) Call our home-grown NegacyclicEvaluatePoly, except that it expects
-	//    a *ring.Poly.  Instead, we can write a tiny adapter that treats
-	//    “polyCoeffs” as if it were a ring.Poly.Coeffs[0][⋯].
-	//
-	//    In other words, we create a dummy *ring.Poly‐like wrapper that
-	//    simply returns polyCoeffs[i] whenever NegacyclicEvaluatePoly asks
-	//    for p.Coeffs[0][i].  To avoid pulling in ring.Ring entirely, one
-	//    can copy NegacyclicEvaluatePoly’s logic here verbatim but replace
-	//    “p.Coeffs[0][i]” by “polyCoeffs[i].”  For maximum clarity, we’ll
-	//    just inline that part:
 
 	// ———————————— Inlined “NegacyclicEvaluatePoly” but reading from polyCoeffs[] ————————————
 	m := n
