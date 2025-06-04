@@ -734,6 +734,10 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 // Field inverse with norms.
 func FieldInverseDiagWithNorm(d *CyclotomicFieldElem) (*CyclotomicFieldElem, []*big.Float) {
 	n := d.N
+	fmt.Printf("FieldInverseDiagWithNorm: n=%d, prec=%d\n", n, d.Coeffs[0].Real.Prec())
+	for i := 0; i < n; i++ {
+		fmt.Printf("  %d: %s + i·%s\n", i, d.Coeffs[i].Real.Text('g', 10), d.Coeffs[i].Imag.Text('g', 10))
+	}
 	prec := d.Coeffs[0].Real.Prec()
 	inv := NewFieldElemBig(n, prec)
 	norms := make([]*big.Float, n)
@@ -873,14 +877,13 @@ func InversePermuteFieldElem(x *CyclotomicFieldElem) {
 //   - n   = f.N
 //   - q   = modulus
 //   - prec = big-float precision.
-func RingFreeToCoeffNegacyclic(
+func FloatToCoeffNegacyclic(
 	f *CyclotomicFieldElem,
 	n int,
-	q uint64,
 	prec uint,
 ) *CyclotomicFieldElem {
 	if f.Domain != Eval {
-		panic("RingFreeToCoeffNegacyclic: input must be in Eval domain")
+		panic("FloatToCoeffNegacyclic: input must be in Eval domain")
 	}
 	m := n
 	twoM := 2 * m
@@ -902,93 +905,57 @@ func RingFreeToCoeffNegacyclic(
 	// 3) The “negacyclic IFFT” says: take the first m slots inv[0..m−1], round Real→int,
 	//    multiply by 2 to reverse the “divide by 2” inside IFFTBig, then reduce mod q.
 	out := NewFieldElemBig(m, prec)
-	bigQ := int64(q)
+	two := new(big.Float).SetPrec(prec).SetFloat64(2.0)
 	for j := 0; j < m; j++ {
-		f64, _ := inv[j].Real.Float64()
-		// IFFTBig already divided each coordinate by (2m).  Because
-		//   IFFTBig does:   (   “regular inverse DFT”   )  / n   (n=2m),
-		// our “true” negacyclic inverse wants 1/(2m) instead of 1/n=1/(2m).
-		// In code above, your original interpo did “f64 * 2” to re-scale
-		// from 1/(2m) to 1/m.  But the classical negacyclic inverse over
-		// x^m+1 requires only a 1/m factor, not 1/(2m).  Since IFFTBig
-		// used a 1/n=1/(2m) scaling, we must multiply by 2 to achieve
-		// a net 1/m.  Hence the “f64*2.0” below.
-		rInt := int64(math.Round(f64 * 2.0))
-		// reduce mod q
-		rInt = ((rInt % bigQ) + bigQ) % bigQ
-		// lift back into *BigComplex with imag=0
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(rInt))
-		imBF := new(big.Float).SetPrec(prec).SetFloat64(0)
-		out.Coeffs[j] = &BigComplex{Real: reBF, Imag: imBF}
+		out.Coeffs[j] = &BigComplex{
+			Real: new(big.Float).Mul(inv[j].Real, two),
+			Imag: new(big.Float).Mul(inv[j].Imag, two), // ≈ 0
+		}
 	}
 	out.Domain = Coeff
 	return out
 }
 
-// RingFreeToEvalNegacyclic treats e ∈ Kₙ in COEFF domain (BigComplex entries ≈ integers mod q),
-// and returns its negacyclic‐FFT in EVAL domain, all without ever constructing a ring.Ring.
+// ------------------------------------------------------------------
+// FloatToEvalNegacyclic  –  forward negacyclic FFT with NO rounding
+// ------------------------------------------------------------------
 //
-//   - n   = e.N  (the length of the polynomial ring / cyclotomic degree).
-//   - q   = the prime modulus (≡ 1 mod 2n).
-//   - prec = big-float precision in bits.
+//	e     : *CyclotomicFieldElem in coefficient form (Domain = Coeff)
+//	        whose Real parts can be arbitrary big.Float values.
+//	prec  : desired big-float precision (bits)
 //
-// The result is a new *CyclotomicFieldElem of length n with Domain=Eval, whose
-// .Coeffs[k] ≈ e(ω^{2k+1}) in high precision.
-func RingFreeToEvalNegacyclic(
-	e *CyclotomicFieldElem,
-	n int,
-	q uint64,
-	prec uint,
-) *CyclotomicFieldElem {
+//	returns a new *CyclotomicFieldElem with Domain = Eval such that
+//	        out.Coeffs[k] = e( ω^{2k+1} )  (ω = e^{2πi/2n})
+//
+//	No integer reduction, no mod-q arithmetic, no Float64 conversion.
+func FloatToEvalNegacyclic(e *CyclotomicFieldElem, n int, prec uint) *CyclotomicFieldElem {
 	if e.Domain != Coeff {
-		panic("RingFreeToEvalNegacyclic: input must be in Coeff domain")
-	}
-	// 1) Build a “length-n” slice of uint64 coefficients in [0..q-1].
-	//    We round each BigFloat→float64→int64, then reduce mod q.
-	polyCoeffs := make([]uint64, n)
-	bigQ := int64(q)
-	for i := 0; i < n; i++ {
-		// e.Coeffs[i].Real should be very close to an integer.
-		f64, _ := e.Coeffs[i].Real.Float64()
-		rInt := int64(math.Round(f64))
-		// reduce into [0..q−1]
-		rInt = ((rInt % bigQ) + bigQ) % bigQ
-		polyCoeffs[i] = uint64(rInt)
+		panic("FloatToEvalNegacyclic: input must be in Coeff domain")
 	}
 
-	// ———————————— Inlined “NegacyclicEvaluatePoly” but reading from polyCoeffs[] ————————————
 	m := n
 	twoM := 2 * m
 
-	// Build length-2m slice A of *BigComplex, zero-padding after index m−1.
+	// 1) build a length-2m slice A with A[2k] = 0, A[2k+1] = coeff[k]
 	A := make([]*BigComplex, twoM)
-	for i := 0; i < m; i++ {
-		// Interpret polyCoeffs[i] as an *unsigned* in [0..q), and
-		// treat it directly as a BigComplex(re=that integer, im=0).
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(polyCoeffs[i]))
-		imBF := new(big.Float).SetPrec(prec).SetFloat64(0)
-		A[i] = &BigComplex{Real: reBF, Imag: imBF}
+	for i := 0; i < twoM; i++ {
+		A[i] = &BigComplex{
+			Real: new(big.Float).SetPrec(prec).SetFloat64(0),
+			Imag: new(big.Float).SetPrec(prec).SetFloat64(0),
+		}
 	}
-	zeroBF := new(big.Float).SetPrec(prec).SetFloat64(0)
-	zeroBC := &BigComplex{Real: zeroBF, Imag: zeroBF}
-	for i := m; i < twoM; i++ {
-		A[i] = zeroBC
-	}
-
-	// 2b) Perform length-2m forward FFTBig (angle = −2π/(2m)).
-	B := FFTBig(A, prec) // length=2m
-
-	// 3) Extract only the odd indices B[2k+1], k=0..m−1
-	evals := make([]*BigComplex, m)
 	for k := 0; k < m; k++ {
-		evals[k] = B[2*k+1].Copy()
+		A[2*k+1] = e.Coeffs[k].Copy() // keep full precision
 	}
 
-	// 4) Pack into a *CyclotomicFieldElem with Domain=Eval
+	// 2) forward length-2m FFT (kernel e^{-2πi/2m})
+	B := FFTBig(A, prec) // length = 2m
+
+	// 3) take odd indices → evaluation vector
 	out := NewFieldElemBig(m, prec)
 	out.Domain = Eval
-	for i := 0; i < m; i++ {
-		out.Coeffs[i] = evals[i]
+	for k := 0; k < m; k++ {
+		out.Coeffs[k] = B[2*k+1] // already a deep copy
 	}
 	return out
 }

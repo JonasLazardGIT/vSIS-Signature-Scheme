@@ -754,14 +754,14 @@ func TestRingFreeToCoeffNegacyclicInversion(t *testing.T) {
 		coeffElem.Domain = Coeff
 		fEval := ToEvalNegacyclic(coeffElem, ringQ, prec)
 
-		// 3) Now convert fEval back via RingFreeToCoeffNegacyclic
-		back := RingFreeToCoeffNegacyclic(fEval, n, q, prec)
+		// 3) Now convert fEval back via FloatToCoeffNegacyclic
+		back := FloatToCoeffNegacyclic(fEval, n, prec)
 		// Compare back.Coeffs[i].Real to original P.Coeffs[0][i]
 		for i := 0; i < n; i++ {
 			got, _ := back.Coeffs[i].Real.Float64()
 			want := float64(P.Coeffs[0][i])
 			if !approxEqual(got, want, 1e-9) {
-				t.Fatalf("Trial %d: RingFreeToCoeffNegacyclic mismatch at %d: got %v, want %v", trial, i, got, want)
+				t.Fatalf("Trial %d: FloatToCoeffNegacyclic mismatch at %d: got %v, want %v", trial, i, got, want)
 			}
 		}
 	}

@@ -21,7 +21,7 @@ func Sample2zField(
 ) (q0, q1 *CyclotomicFieldElem) {
 
 	// 1) draw q1 ← SampleFZBig(d, c1)
-	dCoeff := RingFreeToCoeffNegacyclic(d, n, modulus, prec) // d is in EVAL, convert to COEFF
+	dCoeff := FloatToCoeffNegacyclic(d, n, prec) // d is in EVAL, convert to COEFF
 	// fmt.Printf("Sample2zField: d = %s\n", dCoeff.Coeffs[0].Real.Text('g', 10))
 	// fmt.Printf("Sample2zField: c1 = %s\n", c1.Coeffs[0].Real.Text('g', 10))
 	q1 = SampleFZBig(dCoeff, c1, modulus, prec)
@@ -29,7 +29,7 @@ func Sample2zField(
 	// 2) delta = q1 – c1  (both in COEFF), then lift to EVAL
 	delta := FieldSubBig(q1, c1)
 
-	delta = RingFreeToEvalNegacyclic(delta, n, modulus, prec) // delta is now in EVAL
+	delta = FloatToEvalNegacyclic(delta, n, prec) // delta is now in EVAL
 
 	// 3) invD = conj(d) / |d|²   (remains in EVAL)
 	invD, norms := FieldInverseDiagWithNorm(d)
@@ -70,7 +70,7 @@ func Sample2zField(
 
 	// scaledDelta.Coeffs is still Eval‐domain; fix the flag:
 	scaledDelta.Domain = Eval
-	scaledDelta = RingFreeToCoeffNegacyclic(scaledDelta, n, modulus, prec)
+	scaledDelta = FloatToCoeffNegacyclic(scaledDelta, n, prec)
 
 	// 5) c0′ = c0 + scaledDelta   (all COEFF)
 	c0p := FieldAddBig(c0, scaledDelta)
@@ -85,11 +85,11 @@ func Sample2zField(
 
 	condEval := FieldMulBig(b, tmpCond)
 	condEval.Domain = Eval
-	condEval = RingFreeToCoeffNegacyclic(condEval, n, modulus, prec) // now Domain=Coeff
+	condEval = FloatToCoeffNegacyclic(condEval, n, prec) // now Domain=Coeff
 
 	// 7) aPr = a – cond   (both in COEFF)
 	aPr := a.Copy()
-	aPr = RingFreeToCoeffNegacyclic(aPr, n, modulus, prec) // a is in EVAL, convert to COEFF
+	aPr = FloatToCoeffNegacyclic(aPr, n, prec) // a is in EVAL, convert to COEFF
 	aPr = FieldSubBig(aPr, condEval)
 
 	// 8) q0 ← SampleFZBig(aPr, c0′)
@@ -128,8 +128,8 @@ func SampleFZBig(
 	f0 := f.Copy().ExtractEven()
 	f1 := f.Copy().ExtractOdd()
 	half := m / 2
-	f0 = RingFreeToEvalNegacyclic(f0, half, modulus, prec)
-	f1 = RingFreeToEvalNegacyclic(f1, half, modulus, prec)
+	f0 = FloatToEvalNegacyclic(f0, half, prec)
+	f1 = FloatToEvalNegacyclic(f1, half, prec)
 
 	// 2) permute centers
 	c0 := c.Copy().ExtractEven()
@@ -216,9 +216,9 @@ func SamplePz(
 	}
 
 	// 3) Accumulate Σ r̂ᵀr̂, Σ r̂ᵀê, Σ êᵀê, each multiplied by z
-	aFld = ToEvalNegacyclic(aFld, ringQ, prec) // aFld is now in EVAL
-	bFld = ToEvalNegacyclic(bFld, ringQ, prec) // bFld is now in EVAL
-	dFld = ToEvalNegacyclic(dFld, ringQ, prec) // dFld is now in EVAL
+	aFld = FloatToEvalNegacyclic(aFld, n, prec)
+	bFld = FloatToEvalNegacyclic(bFld, n, prec)
+	dFld = FloatToEvalNegacyclic(dFld, n, prec)
 
 	for j := 0; j < k; j++ {
 		// back to coeff domain
@@ -414,8 +414,8 @@ func SamplePz(
 	c0.Domain = Eval
 	c1.Domain = Eval
 	// c0, c1 are now in EVAL domain, but we need them in COEFF
-	c0 = ToCoeffNegacyclic(c0, ringQ, prec) // c0 is now in COEFF
-	c1 = ToCoeffNegacyclic(c1, ringQ, prec) // c1 is now in COEFF
+	c0 = FloatToCoeffNegacyclic(c0, n, prec)
+	c1 = FloatToCoeffNegacyclic(c1, n, prec)
 	fmt.Printf("SamplePz: c0 = %s, c1 = %s\n", c0.Coeffs[0].Real.Text('g', 10), c1.Coeffs[0].Real.Text('g', 10))
 
 	// 6) Final 2×2 block‐recursive sample → p0,p1
