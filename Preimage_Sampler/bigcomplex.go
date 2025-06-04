@@ -478,7 +478,7 @@ func NegacyclicEvaluatePoly(p *ring.Poly, ringQ *ring.Ring, prec uint) *Cyclotom
 		// Convert p.Coeffs[0][i] to signed int64 in [−q/2..+q/2)
 		signed := UnsignedToSigned(p.Coeffs[0][i], ringQ.Modulus[0])
 		// lift to BigComplex
-		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(signed)) //!signed
+		reBF := new(big.Float).SetPrec(prec).SetFloat64(float64(signed))
 		imBF := new(big.Float).SetPrec(prec).SetFloat64(0.0)
 		A[i] = &BigComplex{Real: reBF, Imag: imBF}
 	}
