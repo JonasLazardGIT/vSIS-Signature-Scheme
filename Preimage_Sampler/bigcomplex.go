@@ -857,6 +857,10 @@ func (e *CyclotomicFieldElem) ExtractOdd() *CyclotomicFieldElem {
 
 func InversePermuteFieldElem(x *CyclotomicFieldElem) {
 	n := x.N
+	if n <= 1 {
+		// nothing to permute
+		return
+	}
 	tmp := make([]*BigComplex, n)
 	half := n / 2
 	e, o := 0, half
@@ -870,92 +874,102 @@ func InversePermuteFieldElem(x *CyclotomicFieldElem) {
 	copy(x.Coeffs, tmp)
 }
 
-// RingFreeToCoeffNegacyclic treats f ∈ Kₙ in EVAL domain (length=n, BigComplex values
-// at the 2n-th roots of −1).  It returns a *CyclotomicFieldElem in COEFF domain by
-// performing the inverse negacyclic FFT, all without ever using ring.Ring.
+// -----------------------------------------------------------------------------
+// FloatToEvalNegacyclic
 //
-//   - n   = f.N
-//   - q   = modulus
-//   - prec = big-float precision.
-func FloatToCoeffNegacyclic(
-	f *CyclotomicFieldElem,
-	n int,
-	prec uint,
-) *CyclotomicFieldElem {
-	if f.Domain != Eval {
-		panic("FloatToCoeffNegacyclic: input must be in Eval domain")
-	}
-	m := n
-	twoM := 2 * m
-
-	// 1) Build length-2m slice A such that A[2k+1] = f.Coeffs[k], A[even] = 0
-	A := make([]*BigComplex, twoM)
-	zeroBF := new(big.Float).SetPrec(prec).SetFloat64(0)
-	zeroBC := &BigComplex{Real: zeroBF, Imag: zeroBF}
-	for i := 0; i < twoM; i += 2 {
-		A[i] = zeroBC
-	}
-	for k := 0; k < m; k++ {
-		A[2*k+1] = f.Coeffs[k].Copy()
-	}
-
-	// 2) Perform length-2m inverse FFTBig (angle = +2π/(2m)), then scale by 1/(2m).
-	inv := IFFTBig(A, prec) // length=2m
-
-	// 3) The “negacyclic IFFT” says: take the first m slots inv[0..m−1], round Real→int,
-	//    multiply by 2 to reverse the “divide by 2” inside IFFTBig, then reduce mod q.
-	out := NewFieldElemBig(m, prec)
-	two := new(big.Float).SetPrec(prec).SetFloat64(2.0)
-	for j := 0; j < m; j++ {
-		out.Coeffs[j] = &BigComplex{
-			Real: new(big.Float).Mul(inv[j].Real, two),
-			Imag: new(big.Float).Mul(inv[j].Imag, two), // ≈ 0
-		}
-	}
-	out.Domain = Coeff
-	return out
-}
-
-// ------------------------------------------------------------------
-// FloatToEvalNegacyclic  –  forward negacyclic FFT with NO rounding
-// ------------------------------------------------------------------
+// Negacyclic FFT (length = 2n) on an element already in COEFF domain.
+// Keeps only the odd-index frequencies so that the output represents
+// evaluations at the 2n-th roots of −1:  ω^{2k+1}.
 //
-//	e     : *CyclotomicFieldElem in coefficient form (Domain = Coeff)
-//	        whose Real parts can be arbitrary big.Float values.
-//	prec  : desired big-float precision (bits)
+// Preconditions
+//   - e.Domain == Coeff
+//   - e.N == desired ring degree n
+//   - FFTBig/IFFTBig work on []*BigComplex with precision = prec.
 //
-//	returns a new *CyclotomicFieldElem with Domain = Eval such that
-//	        out.Coeffs[k] = e( ω^{2k+1} )  (ω = e^{2πi/2n})
+// Post-conditions
+//   - returns a fresh CyclotomicFieldElem in Eval domain.
+//   - coefficients are *BigComplex with *big.Float components (no rounding).
 //
-//	No integer reduction, no mod-q arithmetic, no Float64 conversion.
-func FloatToEvalNegacyclic(e *CyclotomicFieldElem, n int, prec uint) *CyclotomicFieldElem {
+// -----------------------------------------------------------------------------
+func FloatToEvalNegacyclic(e *CyclotomicFieldElem, prec uint) *CyclotomicFieldElem {
 	if e.Domain != Coeff {
 		panic("FloatToEvalNegacyclic: input must be in Coeff domain")
 	}
 
-	m := n
-	twoM := 2 * m
+	n := e.N
+	twoN := 2 * n
 
-	// 1) build a length-2m slice A with A[2k] = 0, A[2k+1] = coeff[k]
-	A := make([]*BigComplex, twoM)
-	for i := 0; i < twoM; i++ {
-		A[i] = &BigComplex{
-			Real: new(big.Float).SetPrec(prec).SetFloat64(0),
-			Imag: new(big.Float).SetPrec(prec).SetFloat64(0),
-		}
+	// 1) Zero-pad the coefficient vector to length 2n.
+	A := make([]*BigComplex, twoN)
+	for i := 0; i < n; i++ {
+		A[i] = e.Coeffs[i].Copy() // deep copy to avoid mutating input
 	}
-	for k := 0; k < m; k++ {
-		A[2*k+1] = e.Coeffs[k].Copy() // keep full precision
+	zeroBF := new(big.Float).SetPrec(prec).SetFloat64(0)
+	zeroBC := &BigComplex{Real: zeroBF, Imag: zeroBF}
+	for i := n; i < twoN; i++ {
+		A[i] = zeroBC
 	}
 
-	// 2) forward length-2m FFT (kernel e^{-2πi/2m})
-	B := FFTBig(A, prec) // length = 2m
+	// 2) Length-2n forward FFT.
+	B := FFTBig(A, prec)
 
-	// 3) take odd indices → evaluation vector
-	out := NewFieldElemBig(m, prec)
+	// 3) Keep only the odd indices (negacyclic spectrum).
+	out := NewFieldElemBig(n, prec)
 	out.Domain = Eval
-	for k := 0; k < m; k++ {
-		out.Coeffs[k] = B[2*k+1] // already a deep copy
+	for k := 0; k < n; k++ {
+		out.Coeffs[k] = B[2*k+1].Copy()
+	}
+	return out
+}
+
+// -----------------------------------------------------------------------------
+// FloatToCoeffNegacyclic
+//
+// Negacyclic inverse FFT that reconstructs the coefficient form from an
+// element in Eval domain **without touching modular integers**.
+//
+// Preconditions
+//   - e.Domain == Eval
+//   - e.N == ring degree n
+//   - IFFTBig scales by 1/(2n) (same as used elsewhere in the code base).
+//
+// Post-conditions
+//   - returns a fresh CyclotomicFieldElem in Coeff domain.
+//   - coefficients are *BigComplex with *big.Float components.
+//
+// -----------------------------------------------------------------------------
+func FloatToCoeffNegacyclic(e *CyclotomicFieldElem, prec uint) *CyclotomicFieldElem {
+	if e.Domain != Eval {
+		panic("FloatToCoeffNegacyclic: input must be in Eval domain")
+	}
+
+	n := e.N
+	twoN := 2 * n
+
+	// 1) Embed eval values into odd slots of a length-2n buffer.
+	A := make([]*BigComplex, twoN)
+	zeroBF := new(big.Float).SetPrec(prec).SetFloat64(0)
+	zeroBC := &BigComplex{Real: zeroBF, Imag: zeroBF}
+	for i := 0; i < twoN; i += 2 {
+		A[i] = zeroBC
+	}
+	for k := 0; k < n; k++ {
+		A[2*k+1] = e.Coeffs[k].Copy()
+	}
+
+	// 2) Inverse FFT (outputs values scaled by 1/(2n)).
+	inv := IFFTBig(A, prec)
+
+	// 3) Multiply by 2 to undo the extra ½ from the odd-slot embedding.
+	two := new(big.Float).SetPrec(prec).SetFloat64(2)
+
+	out := NewFieldElemBig(n, prec)
+	out.Domain = Coeff
+	for j := 0; j < n; j++ {
+		out.Coeffs[j] = &BigComplex{
+			Real: new(big.Float).SetPrec(prec).Mul(inv[j].Real, two),
+			Imag: new(big.Float).SetPrec(prec).Mul(inv[j].Imag, two),
+		}
 	}
 	return out
 }

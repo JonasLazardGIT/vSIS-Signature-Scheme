@@ -2,10 +2,12 @@
 package Preimage_Sampler
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
@@ -753,15 +755,22 @@ func TestRingFreeToCoeffNegacyclicInversion(t *testing.T) {
 		}
 		coeffElem.Domain = Coeff
 		fEval := ToEvalNegacyclic(coeffElem, ringQ, prec)
+		// for i := 0; i < n; i++ {
+		// 	fmt.Printf("fEval[%d] = %v\n", i, fEval.Coeffs[i])
+		// }
 
-		// 3) Now convert fEval back via FloatToCoeffNegacyclic
-		back := FloatToCoeffNegacyclic(fEval, n, prec)
+		// 3) Now convert fEval back via ToCoeffNegacyclic
+		back := ToCoeffNegacyclic(fEval, ringQ, prec)
+
+		// for i := 0; i < n; i++ {
+		// 	fmt.Printf("back.Coeffs[%d] = %v\n", i, back.Coeffs[i])
+		// }
 		// Compare back.Coeffs[i].Real to original P.Coeffs[0][i]
 		for i := 0; i < n; i++ {
 			got, _ := back.Coeffs[i].Real.Float64()
 			want := float64(P.Coeffs[0][i])
 			if !approxEqual(got, want, 1e-9) {
-				t.Fatalf("Trial %d: FloatToCoeffNegacyclic mismatch at %d: got %v, want %v", trial, i, got, want)
+				t.Fatalf("Trial %d: ToCoeffNegacyclic mismatch at %d: got %v, want %v", trial, i, got, want)
 			}
 		}
 	}
@@ -889,6 +898,52 @@ func TestNTTInvNTTNoScale(t *testing.T) {
 		if P.Coeffs[0][i] != Pcopy.Coeffs[0][i] {
 			t.Fatalf("NTT/InvNTT mismatch at index %d: got %d, want %d",
 				i, P.Coeffs[0][i], Pcopy.Coeffs[0][i])
+		}
+	}
+}
+
+// helper: generate a random coefficient vector with prec bits
+func randomCoeffElem(m int, prec uint) *CyclotomicFieldElem {
+	out := NewFieldElemBig(m, prec)
+	for i := 0; i < m; i++ {
+		val := (rand.Float64()*2 - 1) * 1000 // ±1000 range
+		out.Coeffs[i] = NewBigComplex(val, 0, prec)
+	}
+	out.Domain = Coeff
+	return out
+}
+
+func TestFloatFFTRoundTrip(t *testing.T) {
+	rand.Seed(time.Now().UnixNano())
+
+	const (
+		n    = 8   // ring dimension
+		prec = 128 // test precision in bits
+	)
+
+	orig := randomCoeffElem(n, prec)
+
+	// coeff → eval → coeff
+	eval := FloatToEvalNegacyclic(orig, prec)
+	back := FloatToCoeffNegacyclic(eval, prec)
+	for i := 0; i < n; i++ {
+		fmt.Printf("orig[%d] = %s, back[%d] = %s\n", i, back.Coeffs[i].Real.Text('g', 10), i, orig.Coeffs[i].Real.Text('g', 10))
+	}
+	// tolerance = 2^(−prec+10)
+	eps := new(big.Float).SetPrec(prec).SetFloat64(1)
+	eps.SetMantExp(eps, int(-prec+10))
+
+	for i := 0; i < n; i++ {
+		diff := new(big.Float).Sub(orig.Coeffs[i].Real, back.Coeffs[i].Real)
+		if diff.Abs(diff).Cmp(eps) > 0 {
+			t.Fatalf("mismatch at coeff %d: want %s, got %s",
+				i,
+				orig.Coeffs[i].Real.Text('g', 10),
+				back.Coeffs[i].Real.Text('g', 10))
+		}
+		if back.Coeffs[i].Imag.Sign() != 0 {
+			t.Fatalf("imaginary residue at coeff %d: %s",
+				i, back.Coeffs[i].Imag.Text('g', 10))
 		}
 	}
 }
