@@ -9,15 +9,26 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
+// SpectralBound returns the analytic upper-bound
+//
+//	s_max = 1.8*(t+1)*sigma^2*(sqrt(n*k)+sqrt(2n)+4.7)
+func SpectralBound(n, k int, base uint64) float64 {
+	const (
+		dgError       = 8.27181e-25
+		nMax          = 2048
+		spectralConst = 1.8
+	)
+	sigma := math.Sqrt(math.Log(2*float64(nMax)/dgError) / math.Pi)
+	sig2 := sigma * sigma
+	term := math.Sqrt(float64(n*k)) + math.Sqrt(2*float64(n)) + 4.7
+	return spectralConst * float64(base+1) * sig2 * term
+}
+
 // calculateParams computes σₜ=(t+1)σ and
-// s > 1.3·σ·σₜ·√(n·κ + 2·n + 4.7), with σ≈4.578 from Sec. V-A1.
 func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
-	sigma := 4.578                 //3.19                    // smoothing parameter from Sec V-A1
+	sigma := 4.578                 // smoothing parameter from Sec V-A1
 	sigmaT = float64(base) * sigma // σₜ = (t+1)·σ
-	// C0, C1 := 1.5, 4.7
-	// s > C0·σ·σₜ·√(n·κ + 2n + C1)
-	// s = C0 * sigma * sigmaT * math.Sqrt(float64(n*k+2*n)+C1)
-	s = 57.1
+	s = SpectralBound(n, k, base)  // 1.3 * sigma * sigmaT * sqrt(n*k + 2*n + 4.7)
 	return
 }
 

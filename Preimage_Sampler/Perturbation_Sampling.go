@@ -207,7 +207,7 @@ func SamplePz(
 	vb = FloatToCoeffNegacyclic(vb, prec)
 	vd = FloatToCoeffNegacyclic(vd, prec)
 
-	// scalarFactor = -z * s²
+	// scalarFactor = -z
 	scalarFactor := new(big.Float).Neg(zBig)
 	scalarC := NewBigComplexFromFloat(scalarFactor, big.NewFloat(0).SetPrec(prec))
 
@@ -271,12 +271,10 @@ func SamplePz(
 		// encode & NTT
 		P := ringQ.NewPoly()
 		for lvl, qi := range ringQ.Modulus {
+
 			mod := int64(qi)
 			for i := 0; i < n; i++ {
-				c := ints[i] % mod
-				if c < 0 {
-					c += mod
-				}
+				c := SignedToUnsigned(ints[i], uint64(mod))
 				P.Coeffs[lvl][i] = uint64(c)
 			}
 		}
@@ -304,8 +302,8 @@ func SamplePz(
 	}
 	mean := sum / float64(count)
 	variance := sumSq/float64(count) - mean*mean
-	fmt.Printf("SamplePz → q̂ empirical variance = %f  (target ≈ %f)\n",
-		variance, sigmaQ*sigmaQ)
+	standard_deviation := math.Sqrt(variance)
+	fmt.Printf("SamplePz → q̂ empirical standard deviation = %f\n", standard_deviation)
 	//! --- end variance check ---
 
 	// 5) Build centers c0, c1 ∈ K_{2n} (coeff‐domain) via CRT inner‐products
@@ -349,12 +347,18 @@ func SamplePz(
 		c0, c1,
 		ringQ.N, ringQ.Modulus[0], prec,
 	)
-	fmt.Printf("SamplePz: p0 = %s, p1 = %s\n", p0.Coeffs[0].Real.Text('g', 10), p1.Coeffs[0].Real.Text('g', 10))
+	// fmt.Printf("SamplePz: p0 = %s, p1 = %s\n", p0.Coeffs[0].Real.Text('g', 10), p1.Coeffs[0].Real.Text('g', 10))
 	// 7) Convert p0,p1 back to NTT‐domain polys
 	out := make([]*ring.Poly, expectedLength)
 	P0 := NegacyclicInterpolateElem(p0, ringQ)
+	for i := 0; i < 50; i++ {
+		fmt.Printf("SamplePz: P0[%d] = %d\n", i, P0.Coeffs[0][i])
+	}
 	ringQ.NTT(P0, P0)
 	P1 := NegacyclicInterpolateElem(p1, ringQ)
+	for i := 0; i < 50; i++ {
+		fmt.Printf("SamplePz: P1[%d] = %d\n", i, P1.Coeffs[0][i])
+	}
 	ringQ.NTT(P1, P1)
 	out[0], out[1] = P0, P1
 
