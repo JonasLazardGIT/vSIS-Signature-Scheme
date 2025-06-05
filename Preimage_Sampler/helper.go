@@ -194,23 +194,3 @@ func SignedToUnsigned(s int64, q uint64) uint64 {
 	}
 	return uint64(r)
 }
-
-// polyMaxNorm returns the infinity norm of p over R_q:
-func polyMaxNorm(ringQ *ring.Ring, p *ring.Poly) uint64 {
-	var max uint64
-	for lvl, qi := range ringQ.Modulus {
-		mod := uint64(qi)
-		for _, c := range p.Coeffs[lvl] {
-			var abs uint64
-			if c > mod/2 {
-				abs = mod - c
-			} else {
-				abs = c
-			}
-			if abs > max {
-				max = abs
-			}
-		}
-	}
-	return max
-}

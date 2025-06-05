@@ -8,8 +8,6 @@ import (
 	"math/rand"
 	"testing"
 	"time"
-
-	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -19,16 +17,6 @@ import (
 // approxEqual reports whether |a-b| ≤ tol.
 func approxEqual(a, b, tol float64) bool {
 	return math.Abs(a-b) <= tol
-}
-
-// randomUintPoly fills a *ring.Poly with random coefficients in [0, q-1].
-func randomUintPoly(ringQ *ring.Ring) *ring.Poly {
-	P := ringQ.NewPoly()
-	mod := ringQ.Modulus[0]
-	for i := 0; i < ringQ.N; i++ {
-		P.Coeffs[0][i] = uint64(rand.Intn(int(mod)))
-	}
-	return P
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
