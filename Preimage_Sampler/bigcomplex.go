@@ -740,10 +740,10 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 // Field inverse with norms.
 func FieldInverseDiagWithNorm(d *CyclotomicFieldElem) (*CyclotomicFieldElem, []*big.Float) {
 	n := d.N
-	fmt.Printf("FieldInverseDiagWithNorm: n=%d, prec=%d\n", n, d.Coeffs[0].Real.Prec())
-	for i := 0; i < n; i++ {
-		fmt.Printf("  %d: %s + i·%s\n", i, d.Coeffs[i].Real.Text('g', 10), d.Coeffs[i].Imag.Text('g', 10))
-	}
+	// fmt.Printf("FieldInverseDiagWithNorm: n=%d, prec=%d\n", n, d.Coeffs[0].Real.Prec())
+	// for i := 0; i < n; i++ {
+	// 	fmt.Printf("  %d: %s + i·%s\n", i, d.Coeffs[i].Real.Text('g', 10), d.Coeffs[i].Imag.Text('g', 10))
+	// }
 	prec := d.Coeffs[0].Real.Prec()
 	inv := NewFieldElemBig(n, prec)
 	norms := make([]*big.Float, n)

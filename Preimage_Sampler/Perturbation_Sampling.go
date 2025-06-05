@@ -73,7 +73,7 @@ func Sample2zField(
 	scaledDelta = FloatToCoeffNegacyclic(scaledDelta, prec)
 
 	// 5) c0′ = c0 + scaledDelta   (all COEFF)
-	c0p := FieldAddBig(c0, scaledDelta)
+	c0p := FieldAddBig(c0, scaledDelta) //! ADD OR SUB ?
 
 	// 6) cond = b ⋅ d⁻¹ ⋅ bᵀ  (compute in EVAL, then to COEFF)
 	//   - form true Hermitian transpose of b in EVAL

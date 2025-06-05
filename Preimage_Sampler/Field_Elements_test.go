@@ -947,3 +947,105 @@ func TestFloatFFTRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 15) Eval-domain Hermitian transpose should satisfy rᵀ·r = |r|² (purely real)
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestHermitianTransposeInnerProducts(t *testing.T) {
+	const (
+		n    = 16
+		prec = 128
+	)
+	rand.Seed(4242)
+
+	for trial := 0; trial < 5; trial++ {
+		r := randomCoeffElem(n, prec)           // Coeff
+		rEval := FloatToEvalNegacyclic(r, prec) // Eval
+		rT := HermitianTransposeFieldElem(rEval)
+
+		prod := FieldMulBig(rT, rEval) // slot-wise products
+		for i := 0; i < n; i++ {
+			// imag part should be 0
+			im, _ := prod.Coeffs[i].Imag.Float64()
+			if !approxEqual(im, 0.0, 1e-12) {
+				t.Fatalf("trial %d: imag[%d]=%v, want 0", trial, i, im)
+			}
+			// real part should equal |r_i|²
+			exp, _ := rEval.Coeffs[i].AbsSquared().Float64()
+			got, _ := prod.Coeffs[i].Real.Float64()
+			if !approxEqual(got, exp, 1e-9) {
+				t.Fatalf("trial %d: slot %d: got %v, want %v", trial, i, got, exp)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 16) Scalar (n = 1) sanity-check for Sample2zField
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestSample2zFieldScalarCase(t *testing.T) {
+	const (
+		prec = 128
+		q    = uint64(65537)
+	)
+	n := 1
+
+	// a = d = s² = 25, b = 0  (all Eval)
+	a := NewFieldElemBig(n, prec)
+	d := NewFieldElemBig(n, prec)
+	b := NewFieldElemBig(n, prec)
+	s2 := NewBigComplex(25, 0, prec)
+	a.Coeffs[0], d.Coeffs[0] = s2.Copy(), s2.Copy()
+	a.Domain, b.Domain, d.Domain = Eval, Eval, Eval
+
+	// centres c0 = c1 = 0 (Coeff)
+	c0 := NewFieldElemBig(n, prec)
+	c1 := NewFieldElemBig(n, prec)
+	c0.Domain, c1.Domain = Coeff, Coeff
+
+	q0, q1 := Sample2zField(a, b, d, c0, c1, n, q, prec)
+	if q0 == nil || q1 == nil {
+		t.Fatalf("Sample2zField returned nil outputs")
+	}
+	// variance used to draw q0 is aPr = 25 > 0; check printed in function already
+	val, _ := q1.Coeffs[0].Real.Float64()
+	if math.Abs(val) > 1000 { // 6σ guardrail for std≈5
+		t.Fatalf("Sample2zField scalar: q1 sample too large: %v", val)
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 17) Even/Odd split and recomposition in coefficient domain
+// ---------------------------------------------------------------------------------------------------------------------
+
+func TestEvenOddSplitRoundTrip(t *testing.T) {
+	const (
+		n    = 16
+		prec = 64
+	)
+	rand.Seed(606060)
+
+	for trial := 0; trial < 5; trial++ {
+		p := randomCoeffElem(n, prec) // Coeff
+		fe := p.Copy().ExtractEven()  // still Coeff
+		fo := p.Copy().ExtractOdd()
+
+		// Recompose:  g(x) = fe(x²) + x·fo(x²)
+		recomp := NewFieldElemBig(n, prec)
+		for i := 0; i < n/2; i++ {
+			recomp.Coeffs[2*i] = fe.Coeffs[i].Copy()
+			recomp.Coeffs[2*i+1] = fo.Coeffs[i].Copy()
+		}
+		recomp.Domain = Coeff
+
+		for i := 0; i < n; i++ {
+			orig, _ := p.Coeffs[i].Real.Float64()
+			back, _ := recomp.Coeffs[i].Real.Float64()
+			if !approxEqual(orig, back, 1e-9) {
+				t.Fatalf("trial %d: coeff mismatch at %d: got %v, want %v", trial, i, back, orig)
+			}
+		}
+	}
+}
