@@ -26,9 +26,9 @@ func SpectralBound(n, k int, base uint64) float64 {
 
 // calculateParams computes σₜ=(t+1)σ and
 func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
-	sigma := 4.578                 // smoothing parameter from Sec V-A1
-	sigmaT = float64(base) * sigma // σₜ = (t+1)·σ
-	s = SpectralBound(n, k, base)  // 1.3 * sigma * sigmaT * sqrt(n*k + 2*n + 4.7)
+	sigma := 3.19                    // smoothing parameter from Sec V-A1
+	sigmaT = float64(base+1) * sigma // σₜ = (t+1)·σ
+	s = SpectralBound(n, k, base)    // 1.3 * sigma * sigmaT * sqrt(n*k + 2*n + 4.7)
 	return
 }
 
@@ -100,7 +100,7 @@ func GaussSamp(
 
 	}
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
-	Zmat := SampleGDiscrete(ringQ, sigma, base, uCoeffs, k)
+	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
 
 	// Zmat is a matrix of integers Z ∈ ℤ^{κ×N} where each row is a poly in R_q
 
