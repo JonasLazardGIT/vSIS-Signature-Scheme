@@ -949,10 +949,8 @@ func TestFloatFFTRoundTrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// 15) Eval-domain Hermitian transpose should satisfy rᵀ·r = |r|² (purely real)
-// ---------------------------------------------------------------------------------------------------------------------
-
-func TestHermitianTransposeInnerProducts(t *testing.T) {
+// 15) Eval-domain transpose should reverse the evaluation slots
+func TestTransposeEvalDomain(t *testing.T) {
 	const (
 		n    = 16
 		prec = 128
@@ -964,21 +962,22 @@ func TestHermitianTransposeInnerProducts(t *testing.T) {
 		rEval := FloatToEvalNegacyclic(r, prec) // Eval
 		rT := HermitianTransposeFieldElem(rEval)
 
-		prod := FieldMulBig(rT, rEval) // slot-wise products
+		if rT.Domain != Eval {
+			t.Fatalf("trial %d: transpose output not in Eval domain", trial)
+		}
 		for i := 0; i < n; i++ {
-			// imag part should be 0
-			im, _ := prod.Coeffs[i].Imag.Float64()
-			if !approxEqual(im, 0.0, 1e-12) {
-				t.Fatalf("trial %d: imag[%d]=%v, want 0", trial, i, im)
-			}
-			// real part should equal |r_i|²
-			exp, _ := rEval.Coeffs[i].AbsSquared().Float64()
-			got, _ := prod.Coeffs[i].Real.Float64()
-			if !approxEqual(got, exp, 1e-9) {
-				t.Fatalf("trial %d: slot %d: got %v, want %v", trial, i, got, exp)
+			exp := rEval.Coeffs[n-i-1]
+			got := rT.Coeffs[i]
+			rExp, _ := exp.Real.Float64()
+			iExp, _ := exp.Imag.Float64()
+			rGot, _ := got.Real.Float64()
+			iGot, _ := got.Imag.Float64()
+			if !approxEqual(rGot, rExp, 1e-12) || !approxEqual(iGot, iExp, 1e-12) {
+				t.Fatalf("trial %d: slot %d: got %v+%vi, want %v+%vi", trial, i, rGot, iGot, rExp, iExp)
 			}
 		}
 	}
+
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1046,6 +1045,409 @@ func TestEvenOddSplitRoundTrip(t *testing.T) {
 			if !approxEqual(orig, back, 1e-9) {
 				t.Fatalf("trial %d: coeff mismatch at %d: got %v, want %v", trial, i, back, orig)
 			}
+		}
+	}
+}
+
+// InverseFieldElem computes the coefficient-wise inverse of f.
+func InverseFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
+	n := f.N
+	prec := f.Coeffs[0].Real.Prec()
+	out := NewFieldElemBig(n, prec)
+	out.Domain = f.Domain
+	for i := 0; i < n; i++ {
+		out.Coeffs[i] = f.Coeffs[i].Inv()
+	}
+	return out
+}
+
+// shiftRightCoeff performs the coefficient-domain right shift used in PALISADE.
+func shiftRightCoeff(e *CyclotomicFieldElem) *CyclotomicFieldElem {
+	if e.Domain != Coeff {
+		panic("shiftRightCoeff: input must be in Coeff domain")
+	}
+	n := e.N
+	prec := e.Coeffs[0].Real.Prec()
+	out := NewFieldElemBig(n, prec)
+	for i := 0; i < n-1; i++ {
+		out.Coeffs[i+1] = e.Coeffs[i].Copy()
+	}
+	// out[0] = -e[n-1]
+	negR := new(big.Float).SetPrec(prec).Neg(e.Coeffs[n-1].Real)
+	negI := new(big.Float).SetPrec(prec).Neg(e.Coeffs[n-1].Imag)
+	out.Coeffs[0] = &BigComplex{Real: negR, Imag: negI}
+	out.Domain = Coeff
+	return out
+}
+
+// -----------------------------------------------------------------------------
+// Basic Field2n-like operations
+// -----------------------------------------------------------------------------
+
+func TestPALGetFormat(t *testing.T) {
+	const prec = uint(64)
+	f := NewFieldElemBig(2, prec)
+	if f.Domain != Coeff {
+		t.Fatalf("GetFormat mismatch: got %v", f.Domain)
+	}
+}
+
+func TestPALInverse(t *testing.T) {
+	const prec = uint(64)
+	f := NewFieldElemBig(2, prec)
+	f.Domain = Eval
+	f.Coeffs[0] = NewBigComplex(2, 1, prec)
+	f.Coeffs[1] = NewBigComplex(-4, -2, prec)
+
+	inv := InverseFieldElem(f)
+	want0 := NewBigComplex(0.4, -0.2, prec)
+	want1 := NewBigComplex(-0.2, 0.1, prec)
+
+	r0, _ := inv.Coeffs[0].Real.Float64()
+	i0, _ := inv.Coeffs[0].Imag.Float64()
+	wr0, _ := want0.Real.Float64()
+	wi0, _ := want0.Imag.Float64()
+	if !approxEqual(r0, wr0, 1e-12) || !approxEqual(i0, wi0, 1e-12) {
+		t.Fatalf("inverse slot0: got %v+%vi, want %v+%vi", r0, i0, wr0, wi0)
+	}
+	r1, _ := inv.Coeffs[1].Real.Float64()
+	i1, _ := inv.Coeffs[1].Imag.Float64()
+	wr1, _ := want1.Real.Float64()
+	wi1, _ := want1.Imag.Float64()
+	if !approxEqual(r1, wr1, 1e-12) || !approxEqual(i1, wi1, 1e-12) {
+		t.Fatalf("inverse slot1: got %v+%vi, want %v+%vi", r1, i1, wr1, wi1)
+	}
+}
+
+func TestPALPlus(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(2, prec)
+	b := NewFieldElemBig(2, prec)
+	a.Domain, b.Domain = Eval, Eval
+	a.Coeffs[0] = NewBigComplex(2, 1, prec)
+	a.Coeffs[1] = NewBigComplex(-4, 2, prec)
+	b.Coeffs[0] = NewBigComplex(3, -0.1, prec)
+	b.Coeffs[1] = NewBigComplex(-4, 3.2, prec)
+
+	sum := FieldAddBig(a, b)
+	want := []*BigComplex{
+		NewBigComplex(5, 0.9, prec),
+		NewBigComplex(-8, 5.2, prec),
+	}
+	for i := 0; i < 2; i++ {
+		r, _ := sum.Coeffs[i].Real.Float64()
+		im, _ := sum.Coeffs[i].Imag.Float64()
+		wr, _ := want[i].Real.Float64()
+		wi, _ := want[i].Imag.Float64()
+		if !approxEqual(r, wr, 1e-12) || !approxEqual(im, wi, 1e-12) {
+			t.Fatalf("plus[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
+		}
+	}
+}
+
+func TestPALScalarPlus(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(2, prec)
+	a.Domain = Coeff
+	a.Coeffs[0] = NewBigComplex(2, 0, prec)
+	a.Coeffs[1] = NewBigComplex(-4, 0, prec)
+
+	scalar := NewBigComplex(3.2, 0, prec)
+	scalarSum := a.Copy()
+	scalarSum.Coeffs[0] = scalarSum.Coeffs[0].Add(scalar)
+
+	want := []*BigComplex{NewBigComplex(5.2, 0, prec), NewBigComplex(-4, 0, prec)}
+	for i := 0; i < 2; i++ {
+		r, _ := scalarSum.Coeffs[i].Real.Float64()
+		im, _ := scalarSum.Coeffs[i].Imag.Float64()
+		wr, _ := want[i].Real.Float64()
+		wi, _ := want[i].Imag.Float64()
+		if !approxEqual(r, wr, 1e-12) || !approxEqual(im, wi, 1e-12) {
+			t.Fatalf("scalar_plus[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
+		}
+	}
+}
+
+func TestPALMinus(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(2, prec)
+	b := NewFieldElemBig(2, prec)
+	a.Domain, b.Domain = Eval, Eval
+	a.Coeffs[0] = NewBigComplex(2, 1, prec)
+	a.Coeffs[1] = NewBigComplex(-4, 2, prec)
+	b.Coeffs[0] = NewBigComplex(3, -0.1, prec)
+	b.Coeffs[1] = NewBigComplex(-4, 3.2, prec)
+
+	diff := FieldSubBig(a, b)
+	want := []*BigComplex{
+		NewBigComplex(-1, 1.1, prec),
+		NewBigComplex(0, -1.2, prec),
+	}
+	for i := 0; i < 2; i++ {
+		r, _ := diff.Coeffs[i].Real.Float64()
+		im, _ := diff.Coeffs[i].Imag.Float64()
+		wr, _ := want[i].Real.Float64()
+		wi, _ := want[i].Imag.Float64()
+		if !approxEqual(r, wr, 1e-9) || !approxEqual(im, wi, 1e-9) {
+			t.Fatalf("minus[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
+		}
+	}
+}
+
+func TestPALTimes(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(2, prec)
+	b := NewFieldElemBig(2, prec)
+	a.Domain, b.Domain = Eval, Eval
+	a.Coeffs[0] = NewBigComplex(4, 3, prec)
+	a.Coeffs[1] = NewBigComplex(6, -3, prec)
+	b.Coeffs[0] = NewBigComplex(4, -3, prec)
+	b.Coeffs[1] = NewBigComplex(4, -2.8, prec)
+
+	prod := FieldMulBig(a, b)
+	want := []*BigComplex{
+		NewBigComplex(25, 0, prec),
+		NewBigComplex(15.6, -28.8, prec),
+	}
+	for i := 0; i < 2; i++ {
+		r, _ := prod.Coeffs[i].Real.Float64()
+		im, _ := prod.Coeffs[i].Imag.Float64()
+		wr, _ := want[i].Real.Float64()
+		wi, _ := want[i].Imag.Float64()
+		if !approxEqual(r, wr, 1e-9) || !approxEqual(im, wi, 1e-9) {
+			t.Fatalf("times[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
+		}
+	}
+}
+
+func TestPALTimesWithSwitch(t *testing.T) {
+	const prec = uint(64)
+	const n = 4
+	rand.Seed(42)
+	a := NewFieldElemBig(n, prec)
+	b := NewFieldElemBig(n, prec)
+	for i := 0; i < n; i++ {
+		a.Coeffs[i] = NewBigComplex(1, 0, prec)
+	}
+	b.Coeffs[0] = NewBigComplex(1, 0, prec)
+	b.Coeffs[1] = NewBigComplex(0, 0, prec)
+	b.Coeffs[2] = NewBigComplex(1, 0, prec)
+	b.Coeffs[3] = NewBigComplex(0, 0, prec)
+	a.Domain = Coeff
+	b.Domain = Coeff
+
+	aEval := FloatToEvalNegacyclic(a, prec)
+	bEval := FloatToEvalNegacyclic(b, prec)
+	prod := FieldMulBig(aEval, bEval)
+	prod.Domain = Eval
+	prodCoeff := FloatToCoeffNegacyclic(prod, prec)
+
+	want := []*BigComplex{
+		NewBigComplex(0, 0, prec),
+		NewBigComplex(0, 0, prec),
+		NewBigComplex(2, 0, prec),
+		NewBigComplex(2, 0, prec),
+	}
+	for i := 0; i < n; i++ {
+		r, _ := prodCoeff.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(want[i].Real), 1e-9) {
+			t.Fatalf("times_with_switch[%d]: got %v, want %v", i, r, mustFloat64(want[i].Real))
+		}
+	}
+}
+
+func mustFloat64(x *big.Float) float64 {
+	v, _ := x.Float64()
+	return v
+}
+
+func TestPALShiftRight(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(4, prec)
+	a.Domain = Coeff
+	a.Coeffs[0] = NewBigComplex(4, 0, prec)
+	a.Coeffs[1] = NewBigComplex(3, 0, prec)
+	a.Coeffs[2] = NewBigComplex(2, 0, prec)
+	a.Coeffs[3] = NewBigComplex(1, 0, prec)
+
+	out := shiftRightCoeff(a)
+	want := []*BigComplex{
+		NewBigComplex(-1, 0, prec),
+		NewBigComplex(4, 0, prec),
+		NewBigComplex(3, 0, prec),
+		NewBigComplex(2, 0, prec),
+	}
+	for i := 0; i < 4; i++ {
+		r, _ := out.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(want[i].Real), 1e-12) {
+			t.Fatalf("shift_right[%d]: got %v, want %v", i, r, mustFloat64(want[i].Real))
+		}
+	}
+}
+
+func TestPALTransposeCoeff(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(4, prec)
+	a.Domain = Coeff
+	a.Coeffs[0] = NewBigComplex(4, 0, prec)
+	a.Coeffs[1] = NewBigComplex(3, 0, prec)
+	a.Coeffs[2] = NewBigComplex(2, 0, prec)
+	a.Coeffs[3] = NewBigComplex(1, 0, prec)
+
+	t2 := HermitianTransposeFieldElem(a)
+	want := []*BigComplex{
+		NewBigComplex(4, 0, prec),
+		NewBigComplex(-1, 0, prec),
+		NewBigComplex(-2, 0, prec),
+		NewBigComplex(-3, 0, prec),
+	}
+	for i := 0; i < 4; i++ {
+		r, _ := t2.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(want[i].Real), 1e-12) {
+			t.Fatalf("transpose_coeff[%d]: got %v, want %v", i, r, mustFloat64(want[i].Real))
+		}
+	}
+}
+
+func TestPALTransposeEval(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(4, prec)
+	a.Domain = Coeff
+	a.Coeffs[0] = NewBigComplex(4, 0, prec)
+	a.Coeffs[1] = NewBigComplex(3, 0, prec)
+	a.Coeffs[2] = NewBigComplex(2, 0, prec)
+	a.Coeffs[3] = NewBigComplex(1, 0, prec)
+	aEval := FloatToEvalNegacyclic(a, prec)
+	tEval := HermitianTransposeFieldElem(aEval)
+	back := FloatToCoeffNegacyclic(tEval, prec)
+
+	want := []*BigComplex{
+		NewBigComplex(4, 0, prec),
+		NewBigComplex(-1, 0, prec),
+		NewBigComplex(-2, 0, prec),
+		NewBigComplex(-3, 0, prec),
+	}
+	for i := 0; i < 4; i++ {
+		r, _ := back.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(want[i].Real), 1e-9) {
+			t.Fatalf("transpose_eval[%d]: got %v, want %v", i, r, mustFloat64(want[i].Real))
+		}
+	}
+}
+
+func TestPALExtractOddEven(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(4, prec)
+	a.Domain = Coeff
+	a.Coeffs[0] = NewBigComplex(4, 0, prec)
+	a.Coeffs[1] = NewBigComplex(3, 0, prec)
+	a.Coeffs[2] = NewBigComplex(2, 0, prec)
+	a.Coeffs[3] = NewBigComplex(1, 0, prec)
+	odd := a.ExtractOdd()
+	even := a.ExtractEven()
+
+	wantOdd := []*BigComplex{NewBigComplex(3, 0, prec), NewBigComplex(1, 0, prec)}
+	wantEven := []*BigComplex{NewBigComplex(4, 0, prec), NewBigComplex(2, 0, prec)}
+	for i := 0; i < 2; i++ {
+		r, _ := odd.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(wantOdd[i].Real), 1e-12) {
+			t.Fatalf("extract_odd[%d]: got %v, want %v", i, r, mustFloat64(wantOdd[i].Real))
+		}
+		r, _ = even.Coeffs[i].Real.Float64()
+		if !approxEqual(r, mustFloat64(wantEven[i].Real), 1e-12) {
+			t.Fatalf("extract_even[%d]: got %v, want %v", i, r, mustFloat64(wantEven[i].Real))
+		}
+	}
+}
+
+func TestPALInversePermute(t *testing.T) {
+	const prec = uint(64)
+	e := NewFieldElemBig(6, prec)
+	e.Domain = Coeff
+	for i := 0; i < 6; i++ {
+		e.Coeffs[i] = NewBigComplex(float64(i), 0, prec)
+	}
+	InversePermuteFieldElem(e)
+	expect := []float64{0, 3, 1, 4, 2, 5}
+	for i := 0; i < 6; i++ {
+		r, _ := e.Coeffs[i].Real.Float64()
+		if !approxEqual(r, expect[i], 1e-12) {
+			t.Fatalf("inverse_permute[%d]: got %v, want %v", i, r, expect[i])
+		}
+	}
+}
+
+func TestPALScalarMult(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(4, prec)
+	a.Domain = Eval
+	a.Coeffs[0] = NewBigComplex(1, -1, prec)
+	a.Coeffs[1] = NewBigComplex(3, -2, prec)
+	a.Coeffs[2] = NewBigComplex(2, -3, prec)
+	a.Coeffs[3] = NewBigComplex(4, -4, prec)
+
+	scalar := NewBigComplex(3, 0, prec)
+	out := FieldScalarMulBig(a, scalar)
+	want := []*BigComplex{
+		NewBigComplex(3, -3, prec),
+		NewBigComplex(9, -6, prec),
+		NewBigComplex(6, -9, prec),
+		NewBigComplex(12, -12, prec),
+	}
+	for i := 0; i < 4; i++ {
+		r, _ := out.Coeffs[i].Real.Float64()
+		im, _ := out.Coeffs[i].Imag.Float64()
+		wr, _ := want[i].Real.Float64()
+		wi, _ := want[i].Imag.Float64()
+		if !approxEqual(r, wr, 1e-12) || !approxEqual(im, wi, 1e-12) {
+			t.Fatalf("scalar_mult[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
+		}
+	}
+}
+
+func TestPALCoeffToEval(t *testing.T) {
+	const prec = uint(64)
+	a := NewFieldElemBig(8, prec)
+	a.Domain = Coeff
+	vals := []float64{4, 5, 5, 4.2, 5, 7.1, 6, 3}
+	for i, v := range vals {
+		a.Coeffs[i] = NewBigComplex(v, 0, prec)
+	}
+	aEval := FloatToEvalNegacyclic(a, prec)
+	if aEval.Domain != Eval {
+		t.Fatalf("expected Eval domain")
+	}
+	back := FloatToCoeffNegacyclic(aEval, prec)
+	for i := 0; i < 8; i++ {
+		orig, _ := a.Coeffs[i].Real.Float64()
+		got, _ := back.Coeffs[i].Real.Float64()
+		if !approxEqual(orig, got, 1e-9) {
+			t.Fatalf("coeff_eval[%d]: got %v, want %v", i, got, orig)
+		}
+	}
+}
+
+func TestPALEvalToCoeff(t *testing.T) {
+	const prec = uint(64)
+	b := NewFieldElemBig(8, prec)
+	b.Domain = Eval
+	valsR := []float64{4.03087, 8.15172, 1.26249, 2.55492, 2.55492, 1.26249, 8.15172, 4.03087}
+	valsI := []float64{26.2795, 5.84489, 0.288539, 0.723132, -0.723132, -0.288539, -5.84489, -26.2795}
+	for i := 0; i < 8; i++ {
+		b.Coeffs[i] = NewBigComplex(valsR[i], valsI[i], prec)
+	}
+	bCoeff := FloatToCoeffNegacyclic(b, prec)
+	if bCoeff.Domain != Coeff {
+		t.Fatalf("expected Coeff domain")
+	}
+	back := FloatToEvalNegacyclic(bCoeff, prec)
+	for i := 0; i < 8; i++ {
+		r, _ := back.Coeffs[i].Real.Float64()
+		im, _ := back.Coeffs[i].Imag.Float64()
+		wr := valsR[i]
+		wi := valsI[i]
+		if !approxEqual(r, wr, 1e-6) || !approxEqual(im, wi, 1e-6) {
+			t.Fatalf("eval_coeff[%d]: got %v+%vi, want %v+%vi", i, r, im, wr, wi)
 		}
 	}
 }
