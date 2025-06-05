@@ -17,6 +17,15 @@ const (
 	acc             = 5e-32 // tail‐mass accuracy for inversion CDF
 )
 
+// ForceZero controls whether DiscreteGaussian.Draw always returns 0.
+// It is meant for deterministic testing only.
+var ForceZero bool
+
+// SetForceZero toggles deterministic zero sampling for tests.
+func SetForceZero(b bool) {
+	ForceZero = b
+}
+
 // DiscreteGaussian encapsulates a sampler for D_ℤ(mean, σ).
 type DiscreteGaussian struct {
 	sigma   float64   // stddev
@@ -64,6 +73,9 @@ func (dg *DiscreteGaussian) initialize() {
 
 // Draw samples one integer ∼ D_ℤ(mean, σ).
 func (dg *DiscreteGaussian) Draw(mean float64) int64 {
+	if ForceZero {
+		return 0
+	}
 	if dg.peikert {
 		// inversion sampling
 		u := rand.Float64() - 0.5
