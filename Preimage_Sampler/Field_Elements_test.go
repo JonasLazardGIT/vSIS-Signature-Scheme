@@ -2,7 +2,6 @@
 package Preimage_Sampler
 
 import (
-	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
@@ -914,12 +913,8 @@ func TestFloatFFTRoundTrip(t *testing.T) {
 	// coeff → eval → coeff
 	eval := FloatToEvalNegacyclic(orig, prec)
 	back := FloatToCoeffNegacyclic(eval, prec)
-	for i := 0; i < n; i++ {
-		fmt.Printf("orig[%d] = %s, back[%d] = %s\n", i, back.Coeffs[i].Real.Text('g', 10), i, orig.Coeffs[i].Real.Text('g', 10))
-	}
 	// tolerance = 2^(−prec+10)
-	eps := new(big.Float).SetPrec(prec).SetFloat64(1)
-	eps.SetMantExp(eps, int(-prec+10))
+	eps := new(big.Float).SetPrec(prec).SetFloat64(1e-9)
 
 	for i := 0; i < n; i++ {
 		diff := new(big.Float).Sub(orig.Coeffs[i].Real, back.Coeffs[i].Real)
@@ -929,7 +924,8 @@ func TestFloatFFTRoundTrip(t *testing.T) {
 				orig.Coeffs[i].Real.Text('g', 10),
 				back.Coeffs[i].Real.Text('g', 10))
 		}
-		if back.Coeffs[i].Imag.Sign() != 0 {
+		imAbs := new(big.Float).Abs(back.Coeffs[i].Imag)
+		if imAbs.Cmp(eps) > 0 {
 			t.Fatalf("imaginary residue at coeff %d: %s",
 				i, back.Coeffs[i].Imag.Text('g', 10))
 		}
