@@ -351,12 +351,12 @@ func SamplePz(
 	// 7) Convert p0,p1 back to NTT‐domain polys
 	out := make([]*ring.Poly, expectedLength)
 	P0 := NegacyclicInterpolateElem(p0, ringQ)
-	for i := 0; i < 50; i++ {
+	for i := 0; i < ringQ.N && i < 50; i++ {
 		fmt.Printf("SamplePz: P0[%d] = %d\n", i, P0.Coeffs[0][i])
 	}
 	ringQ.NTT(P0, P0)
 	P1 := NegacyclicInterpolateElem(p1, ringQ)
-	for i := 0; i < 50; i++ {
+	for i := 0; i < ringQ.N && i < 50; i++ {
 		fmt.Printf("SamplePz: P1[%d] = %d\n", i, P1.Coeffs[0][i])
 	}
 	ringQ.NTT(P1, P1)
