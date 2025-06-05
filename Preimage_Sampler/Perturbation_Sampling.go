@@ -2,6 +2,7 @@ package Preimage_Sampler
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/big"
 
@@ -190,9 +191,7 @@ func SamplePz(
 
 		// evaluate as complex vectors (Eval domain)
 		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
-		// rF = ToEvalNegacyclic(rF, ringQ, prec) // rF is now in EVAL
 		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
-		// eF = ToEvalNegacyclic(eF, ringQ, prec) // eF is now in EVAL
 
 		rT := HermitianTransposeFieldElem(rF)
 		eT := HermitianTransposeFieldElem(eF)
@@ -225,7 +224,39 @@ func SamplePz(
 	aFld = FloatToEvalNegacyclic(aFld, prec)
 	bFld = FloatToEvalNegacyclic(bFld, prec)
 	dFld = FloatToEvalNegacyclic(dFld, prec)
+	//!------------------------------------------------------------------
+	//! 3-bis)  ‖α · [Tᵗ | I]‖  ≤  s   ︙  spectral-norm sanity check
+	//!------------------------------------------------------------------
+	{
+		eps := 1e-12 // relative slack
+		maxNorm := 0.0
+		for i := 0; i < n; i++ {
+			rr, _ := va.Coeffs[i].Real.Float64() // Σ r̂_i²  (real part)
+			re, _ := vb.Coeffs[i].Real.Float64() // Σ r̂_i ê̂_i
+			ee, _ := vd.Coeffs[i].Real.Float64() // Σ ê̂_i²
+			rr += 1.0                            // + identity contribution
+			ee += 1.0
 
+			trace := rr + ee
+			discr := trace*trace - 4*(rr*ee-re*re)
+			if discr < 0 { // numerical guard
+				discr = 0
+			}
+			lambdaMax := 0.5 * (trace + math.Sqrt(discr))
+			spec := alpha * math.Sqrt(lambdaMax) // α‖·‖₂ for slot i
+			if spec > maxNorm {
+				maxNorm = spec
+			}
+		}
+		if maxNorm > s*(1+eps) {
+			log.Panicf("parameter s = %.6g is too small; need ≥ %.6g to satisfy ‖α[Tᵗ|I]‖≤s",
+				s, maxNorm)
+		} else {
+			fmt.Printf("spectral-norm check: α‖[Tᵗ|I]‖ = %.6g  ≤  s = %.6g  ✔\n",
+				maxNorm, s)
+		}
+	}
+	//! ------------------------------------------------------------------
 	// 4) Sample Q ∈ ℤ^{k×n} from D_{√(s²−α²)} and CRT→NTT→qhat
 	sigmaQ := math.Sqrt(s*s - alpha*alpha)
 	fmt.Printf("SamplePz: σQ = %f\n", sigmaQ)
