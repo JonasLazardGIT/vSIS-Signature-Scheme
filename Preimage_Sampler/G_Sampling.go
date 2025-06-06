@@ -1,9 +1,7 @@
 package Preimage_Sampler
 
 import (
-	"log"
 	"math"
-	"math/big"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/utils"
@@ -144,211 +142,172 @@ func TrapGen(ringQ *ring.Ring, base uint64, sigmaT float64) Trapdoor {
 	}
 }
 
-// Perturb implements PERTURB(σ,ℓ,h,base) from Alg 3 of the paper.
-// It uses the new discrete–Gaussian sampler so that each zi ← Dℤ(mean,σi).
-func Perturb(sigma float64, ell, h []float64, base uint64) []int64 {
-	k := len(ell)
-	// 1) sample z-vector via exact Dℤ
+// Perturb mirrors PALISADE's discrete Perturb (Fig. 2, 2017/308).
+//
+//	l, h : Cholesky scalars (length k)
+//	base : gadget radix  t  (≥2)
+//
+// RETURNS p ∈ ℤᵏ  and keeps all intermediate computation in int64.
+func Perturb(
+	sigma float64,
+	l, h []float64,
+	base uint64,
+) []int64 {
+
+	k := len(l)
 	z := make([]int64, k)
-	beta := 0.0
+
+	var d float64
 	for i := 0; i < k; i++ {
-		mean := beta / ell[i]
-		sigmaI := sigma / ell[i]
-		dg := NewDiscreteGaussian(sigmaI)
-		z[i] = dg.Draw(mean)
-		beta = -float64(z[i]) * h[i]
+		dgg := NewDiscreteGaussian(sigma / l[i]) // reinitialize dgg for each i
+		z[i] = dgg.Draw(d / l[i])
+		d = -float64(z[i]) * h[i]
 	}
 
-	// 2) build the gadget–base combination p
 	p := make([]int64, k)
-
-	// first coordinate: (2·base+1)*z0 + base·z1
-	p[0] = int64(2*base+1)*z[0] + int64(base)*z[1]
-
-	// middle coordinates: base*(z[i−1] + 2·z[i] + z[i+1])
-	for i := 1; i < k-1; i++ {
-		sum := z[i-1] + 2*z[i] + z[i+1]
-		p[i] = int64(base) * sum
+	if k == 1 {
+		// degenerate case: p₀ = (2·base+1) z₀
+		p[0] = int64(2*base+1) * z[0]
+		return p
 	}
 
-	// last coordinate: base*(z[k-2] + 2·z[k-1])
+	p[0] = int64(2*base+1)*z[0] + int64(base)*z[1]
+	for i := 1; i < k-1; i++ {
+		p[i] = int64(base) * (z[i-1] + 2*z[i] + z[i+1])
+	}
 	p[k-1] = int64(base) * (z[k-2] + 2*z[k-1])
-
 	return p
 }
 
-// SampleD implements the discrete‐Sample_D of Alg.3.
+// SampleC reproduces PALISADE's SampleC (Figure 2, 2017/308).
 //
-//	sigma: the stddev σ
-//	  a   : the accumulator vector a ∈ ℝ^k (we modify it in place)
-//	  c   : the conditioning vector c ∈ ℝ^k
+//	c     :  constant divisor vector  (length k)
+//	a     :  *mutable* accumulator  (length k) – will be updated in place
+//	sigma :  continuous σ'
 //
-// returns z ∈ ℤ^k
-func SampleD(sigma float64, a, c []float64) []int {
-	k := len(a)
-	z := make([]int, k)
+// It returns the lattice vector z (length k)   INT64.
+func SampleC(
+	c []float64,
+	sigma float64,
+	a []float64,
+) []int64 {
 
-	// 1) last coord
-	mean := -a[k-1] / c[k-1]
-	stdp := sigma / c[k-1]
-	dg0 := NewDiscreteGaussian(stdp)
-	z[k-1] = int(dg0.Draw(mean))
+	k := len(c)
+	z := make([]int64, k)
 
-	// update a ← a + zₖ₋₁·c
-	for i := range a {
-		a[i] += float64(z[k-1]) * c[i]
+	// 1) draw last coordinate with conditional parameters
+	dgg := NewDiscreteGaussian(sigma / c[k-1]) // corrected to initialize dgg
+	z[k-1] = dgg.Draw(
+		-a[k-1] / c[k-1])
+
+	// 2) propagate carry:  a ← a + z_{k-1}·c   (note the **plus**)
+	zLastFloat := float64(z[k-1])
+	for i := 0; i < k; i++ {
+		a[i] += zLastFloat * c[i]
 	}
 
-	// 2) remaining coords
+	// 3) draw remaining coordinates (independent, mean = -a_i)
 	for i := 0; i < k-1; i++ {
-		dg := NewDiscreteGaussian(sigma)
-		z[i] = int(dg.Draw(-a[i]))
+		dgg = NewDiscreteGaussian(sigma) // reinitialize dgg for each i
+		z[i] = dgg.Draw(-a[i])
 	}
-
 	return z
 }
 
-// SampleGDiscrete runs the *discrete* G-sampling (Alg 3) exactly.
+// SampleGDiscrete implements the *discrete* G–sampling exactly like the
+// PALISADE C++ reference GaussSampGqArbBase (Fig. 2, ePrint 2017/308).
 //
 //	ringQ   : R_q ring
-//	sigma   : continuous Gaussian width σₜ
-//	base    : gadget base t
+//	sigma   : continuous Gaussian width σ_t
+//	base    : gadget base t  (may be >2)
 //	uCoeff  : coefficient form of u(x) in [0,q), len=N=ringQ.N
 //	k       : gadget length (digits)
 //
-// returns a k×N matrix Z of ints.
+// RETURNS  a k×N matrix Z of int64.
 func SampleGDiscrete(
 	ringQ *ring.Ring,
 	sigma float64,
 	base uint64,
 	uCoeff []uint64,
 	k int,
+	dgg *DiscreteGaussian,
 ) [][]int64 {
-	const bigPrec = 256 // précision binaire pour tous les big.Float
-	N := ringQ.N
 
-	// 1) build ell[], h[] en float64 (pas critique pour la précision des centres)
-	ell := make([]float64, k)
+	N := ringQ.N
+	q := ringQ.Modulus[0]                             // single-precision ring
+	modDigits := baseDigits(int64(q), int64(base), k) // q_i
+
+	//--------------------------------------------------------------------
+	// 1)  L = diag(l)  +  diag(h,1)  (only σ-scaling constants)
+	//--------------------------------------------------------------------
+	l := make([]float64, k)
 	h := make([]float64, k)
-	ell[0] = math.Sqrt(float64(base)*(1+1/float64(k)) + 1)
+
+	l[0] = math.Sqrt(float64(base)*(1+1/float64(k)) + 1)
 	for i := 1; i < k; i++ {
-		ell[i] = math.Sqrt(float64(base) * (1 + 1/float64(k-i)))
+		l[i] = math.Sqrt(float64(base) * (1 + 1/float64(k-i)))
 	}
 	h[0] = 0
 	for i := 1; i < k; i++ {
 		h[i] = math.Sqrt(float64(base) * (1 - 1/float64(k-(i-1))))
 	}
 
-	// 2) build dBig[] en big.Float à partir des digits de q
-	q := ringQ.Modulus[0]
-	modDigits := baseDigits(int64(q), int64(base), k)
-
-	// dBig[i] = (modDigits[0] + modDigits[1] + ... + modDigits[i]) / 2^i
-	dBig := make([]*big.Float, k)
-	// On commence avec dBig[0] = modDigits[0] / 2
-	twoB := new(big.Float).SetPrec(bigPrec).SetFloat64(2.0)
-	dBig[0] = new(big.Float).SetPrec(bigPrec).
-		Quo(
-			new(big.Float).SetPrec(bigPrec).SetFloat64(float64(modDigits[0])),
-			twoB,
-		)
-	// puis dBig[i] = (dBig[i-1] + modDigits[i]) / 2
+	//--------------------------------------------------------------------
+	// 2)  cConst = constant divisor vector  (depends ONLY on modulus)
+	//--------------------------------------------------------------------
+	cConst := make([]float64, k) // acts as "c" in C++
+	cConst[0] = float64(modDigits[0]) / float64(base)
 	for i := 1; i < k; i++ {
-		tmp := new(big.Float).SetPrec(bigPrec).
-			Add(
-				dBig[i-1],
-				new(big.Float).SetPrec(bigPrec).SetFloat64(float64(modDigits[i])),
-			)
-		dBig[i] = new(big.Float).SetPrec(bigPrec).Quo(tmp, twoB)
+		cConst[i] = (cConst[i-1] + float64(modDigits[i])) / float64(base)
 	}
 
-	// 3) sigma′ = σₜ/(base+1)
+	//--------------------------------------------------------------------
+	// 3)  σ'  =  σ_t /(t+1)
+	//--------------------------------------------------------------------
 	sigmaP := sigma / float64(base+1)
 
-	// 4) préparer la sortie Z[k][N]
+	//--------------------------------------------------------------------
+	// 4)  allocate result  Z[k][N]
+	//--------------------------------------------------------------------
 	Z := make([][]int64, k)
 	for i := range Z {
 		Z[i] = make([]int64, N)
 	}
 
-	// 5) boucle par coefficient j = 0..N-1
+	//--------------------------------------------------------------------
+	// 5)  main loop over polynomial coefficients
+	//--------------------------------------------------------------------
 	for j := 0; j < N; j++ {
-		v := uCoeff[j]                                  // u_j ∈ [0,q)
-		vDigits := baseDigits(int64(v), int64(base), k) // décomposition base‐t en ints
+		// 5a)  base-t digits of current syndrome coeff
+		vDigits := baseDigits(int64(uCoeff[j]), int64(base), k)
 
-		// 5a) perturb → p[0..k-1] (on ignore la précision ici, c’est du perturbe exact)
-		p := Perturb(sigmaP, ell, h, base)
+		// 5b)  perturbation  p   (discrete variant)
+		p := Perturb(sigmaP, l, h, base) // []int64 length k
 
-		// 5b) construire les centres cBig[0..k-1] en big.Float
-		cBig := make([]*big.Float, k)
-
-		// cBig[0] = (vDigits[0] - p[0]) / base
-		numer0 := new(big.Float).SetPrec(bigPrec).SetFloat64(
-			float64(vDigits[0] - p[0]),
-		)
-		cBig[0] = new(big.Float).SetPrec(bigPrec).Quo(numer0, twoB)
-
-		// Pour i=1..k-1 : cBig[i] = (cBig[i-1] + vDigits[i] - p[i]) / base
+		// 5c)  build *accumulator*  a  (running carry)      [! changed]
+		a := make([]float64, k)
+		a[0] = float64(int64(vDigits[0])-p[0]) / float64(base)
 		for i := 1; i < k; i++ {
-			tmp := new(big.Float).SetPrec(bigPrec).
-				Add(
-					cBig[i-1],
-					new(big.Float).SetPrec(bigPrec).SetFloat64(float64(vDigits[i]-p[i])),
-				)
-			cBig[i] = new(big.Float).SetPrec(bigPrec).Quo(tmp, twoB)
-
-			// Vérification de l’invariant carry en multiprécision :
-			//   base*c[i] ?= c[i-1] + vDigits[i] - p[i]
-			lhs := new(big.Float).SetPrec(bigPrec).
-				Mul(new(big.Float).SetPrec(bigPrec).SetFloat64(float64(base)), cBig[i])
-			rhs := new(big.Float).SetPrec(bigPrec).
-				Add(
-					cBig[i-1],
-					new(big.Float).SetPrec(bigPrec).SetFloat64(float64(vDigits[i]-p[i])),
-				)
-			diff := new(big.Float).SetPrec(bigPrec).Sub(lhs, rhs)
-			absDiff := new(big.Float).SetPrec(bigPrec).Abs(diff)
-			tolBig := new(big.Float).SetPrec(bigPrec).SetFloat64(1e-30)
-			if absDiff.Cmp(tolBig) > 0 {
-				lhsF, _ := lhs.Float64()
-				rhsF, _ := rhs.Float64()
-				log.Printf(
-					"CARRY_ERR (j=%d,i=%d): base*c=%.12g, (c_prev+v-p)=%.12g\n",
-					j, i, lhsF, rhsF,
-				)
-			}
+			a[i] = (a[i-1] + float64(int64(vDigits[i])-p[i])) / float64(base)
 		}
 
-		// 5c) construire d[] en float64 à partir de dBig (pour le SampleD)
-		d := make([]float64, k)
-		for i := 0; i < k; i++ {
-			d[i], _ = dBig[i].Float64() // conversion unique ici
-		}
-
-		// 5d) bâtir le slice “centers” en float64 pour SampleD :
-		c := make([]float64, k)
-		for i := 0; i < k; i++ {
-			c[i], _ = cBig[i].Float64() // conversion unique ici
-		}
-
-		// 5e) discrete‐Gaussian sample z[0..k-1]
-		z := SampleD(sigmaP, c, d)
-
-		// 5f) reconstituer t = (t₀,...,t_{k-1}) en int64
-		//    t₀ = 2 z₀ + q₀ z_{k-1} + v₀
-		Z[0][j] = 2*int64(z[0]) +
+		// 5d)  sample  z  from the sparse lattice           [! changed]
+		z := SampleC(cConst, sigmaP, a)
+		// 5e)  recombine t-vector and store into Z          [! changed]
+		//      t₀  =  base·z₀  +  q₀·z_{k−1}  +  v₀
+		Z[0][j] = int64(base)*int64(z[0]) +
 			int64(modDigits[0])*int64(z[k-1]) +
 			int64(vDigits[0])
 
-		//    t_i = 2 z_i − z_{i-1} + q_i z_{k-1} + v_i  (pour i=1..k-2)
+		//      t_i =  base·z_i − z_{i−1} + q_i·z_{k−1} + v_i   for 1≤i≤k−2
 		for i := 1; i < k-1; i++ {
-			Z[i][j] = 2*int64(z[i]) -
+			Z[i][j] = int64(base)*int64(z[i]) -
 				int64(z[i-1]) +
 				int64(modDigits[i])*int64(z[k-1]) +
 				int64(vDigits[i])
 		}
 
-		//    t_{k-1} = q_{k-1} z_{k-1} − z_{k-2} + v_{k-1}
+		//      t_{k−1} = q_{k−1}·z_{k−1} − z_{k−2} + v_{k−1}
 		Z[k-1][j] = int64(modDigits[k-1])*int64(z[k-1]) -
 			int64(z[k-2]) +
 			int64(vDigits[k-1])

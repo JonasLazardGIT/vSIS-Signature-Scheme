@@ -99,8 +99,9 @@ func GaussSamp(
 		uCoeffs[j] = SignedToUnsigned(signed, ringQ.Modulus[0])
 
 	}
+	dgg := NewDiscreteGaussian(sigma) // discrete Gaussian sampler for G-sampling
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
-	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
+	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k, dgg)
 
 	// Zmat is a matrix of integers Z ∈ ℤ^{κ×N} where each row is a poly in R_q
 
