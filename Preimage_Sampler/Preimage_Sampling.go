@@ -180,8 +180,16 @@ func GaussSamp(
 			p0t := centre(p0CoeffPoly.Coeffs[0][t])
 			ez := centre(eDotZCoeff.Coeffs[0][t])
 			xt := centre(xCoeffPoly.Coeffs[0][t])
-			if p0t+ez != xt {
-				log.Fatalf("Cancel-check x0 mismatch slot %d: p0=%d e·z=%d sum=%d x0=%d", t, p0t, ez, p0t+ez, xt)
+			if xt < 0 {
+				xt += int64(ringQ.Modulus[0])
+			}
+			p0tplusEz := p0t + ez
+			if p0tplusEz < 0 && xt >= 0 {
+				p0tplusEz += int64(ringQ.Modulus[0])
+			}
+			if p0tplusEz != xt {
+				log.Fatalf("Cancel-check x0 mismatch slot %d: p0=%d e·z=%d sum=%d x0=%d", t, p0t, ez, p0tplusEz, xt)
+
 			}
 		}
 
@@ -200,8 +208,12 @@ func GaussSamp(
 			p1t := centre(p1CoeffPoly.Coeffs[0][t])
 			rz := centre(rDotZCoeff.Coeffs[0][t])
 			xt := centre(x1CoeffPoly.Coeffs[0][t])
-			if p1t+rz != xt {
-				log.Fatalf("Cancel-check x1 mismatch slot %d: p1=%d r·z=%d sum=%d x1=%d", t, p1t, rz, p1t+rz, xt)
+			p1tplusrz := p1t + rz
+			if p1tplusrz < 0 && xt >= 0 {
+				p1tplusrz += int64(ringQ.Modulus[0])
+			}
+			if p1tplusrz != xt {
+				log.Fatalf("Cancel-check x1 mismatch slot %d: p1=%d r·z=%d sum=%d x1=%d", t, p1t, rz, p1tplusrz, xt)
 			}
 		}
 
