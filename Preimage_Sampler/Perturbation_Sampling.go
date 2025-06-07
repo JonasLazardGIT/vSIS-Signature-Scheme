@@ -208,7 +208,7 @@ func SamplePz(
 	vd = FloatToCoeffNegacyclic(vd, prec)
 
 	// scalarFactor = -z
-	scalarFactor := new(big.Float).Neg(zBig)
+	scalarFactor := new(big.Float).Copy(zBig)
 	scalarC := NewBigComplexFromFloat(scalarFactor, big.NewFloat(0).SetPrec(prec))
 
 	// build a,b,d in coefficient domain
@@ -306,59 +306,111 @@ func SamplePz(
 	fmt.Printf("SamplePz → q̂ empirical standard deviation = %f\n", standard_deviation)
 	//! --- end variance check ---
 
-	// 5) Build centers c0, c1 ∈ K_{2n} (coeff‐domain) via CRT inner‐products
-	scaleN := new(big.Float).SetPrec(prec).SetFloat64(-alpha * alpha)
-	scaleD := new(big.Float).SetPrec(prec).Sub(s2, α2)
-	scale := new(big.Float).SetPrec(prec).Quo(scaleN, scaleD)
-	scaleC := NewBigComplexFromFloat(scale, big.NewFloat(0).SetPrec(prec))
+	// ---------------------------
+	//  5. Build centres in R_q
+	//     c0 = –z · Σ_j r̂_j · Q_j
+	//     c1 = –z · Σ_j ê̂_j · Q_j
+	//
+	// ---------------------------
+	c0Poly := ringQ.NewPoly() // coefficient‐domain accumulator
+	c1Poly := ringQ.NewPoly()
+	tmp := ringQ.NewPoly()
 
-	c0 := NewFieldElemBig(n, prec)
-	c1 := NewFieldElemBig(n, prec)
-
+	// (a) accumulate inner‐products in coeff domain
 	for j := 0; j < k; j++ {
-		qPoly := ringQ.NewPoly()
-		ringQ.InvNTT(qhat[j], qPoly)
-		rPoly := ringQ.NewPoly()
-		ringQ.InvNTT(Ttilde[0][j], rPoly)
-		ePoly := ringQ.NewPoly()
-		ringQ.InvNTT(Ttilde[1][j], ePoly)
-		qF := NegacyclicEvaluatePoly(qPoly, ringQ, prec)
-		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
-		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
-		rT := HermitianTransposeFieldElem(rF)
-		eT := HermitianTransposeFieldElem(eF)
-		for i := 0; i < n; i++ {
-			c0.Coeffs[i] = c0.Coeffs[i].Add(rT.Coeffs[i].Mul(qF.Coeffs[i]))
-			c1.Coeffs[i] = c1.Coeffs[i].Add(eT.Coeffs[i].Mul(qF.Coeffs[i]))
-		}
+		// extract Q_j in coeff form
+		ringQ.InvNTT(qhat[j], tmp) // tmp ← Q_j (coeff)
+		// accumulate r̂_j·Q_j and ê̂_j·Q_j
+		ringQ.MulCoeffsMontgomery(Ttilde[0][j], tmp, tmp)
+		ringQ.Add(c0Poly, tmp, c0Poly)
+		ringQ.MulCoeffsMontgomery(Ttilde[1][j], tmp, tmp)
+		ringQ.Add(c1Poly, tmp, c1Poly)
 	}
-	c0 = FieldScalarMulBig(c0, scaleC)
-	c1 = FieldScalarMulBig(c1, scaleC)
-	c0.Domain = Eval
-	c1.Domain = Eval
-	// c0, c1 are now in EVAL domain, but we need them in COEFF
-	c0 = FloatToCoeffNegacyclic(c0, prec)
-	c1 = FloatToCoeffNegacyclic(c1, prec)
-	fmt.Printf("SamplePz: c0 = %s, c1 = %s\n", c0.Coeffs[0].Real.Text('g', 10), c1.Coeffs[0].Real.Text('g', 10))
 
-	// 6) Final 2×2 block‐recursive sample → p0,p1
+	// (b) scale each coefficient by –z and round to nearest integer mod q
+	zF, _ := zBig.Float64()
+	for i := 0; i < ringQ.N; i++ {
+		// center into (−q/2,q/2]
+		v0 := int64(c0Poly.Coeffs[0][i])
+		if v0 > int64(ringQ.Modulus[0]/2) {
+			v0 -= int64(ringQ.Modulus[0])
+		}
+		// multiply by –z and round
+		s0 := int64(math.Round(-zF * float64(v0)))
+		c0Poly.Coeffs[0][i] = SignedToUnsigned(s0, ringQ.Modulus[0])
+
+		v1 := int64(c1Poly.Coeffs[0][i])
+		if v1 > int64(ringQ.Modulus[0]/2) {
+			v1 -= int64(ringQ.Modulus[0])
+		}
+		s1 := int64(math.Round(-zF * float64(v1)))
+		c1Poly.Coeffs[0][i] = SignedToUnsigned(s1, ringQ.Modulus[0])
+	}
+
+	// 1) Convert c0Poly (a *ring.Poly* in coeff‐domain) into a field‐element in Eval
+	c0Eval := ConvertFromPolyBig(ringQ, c0Poly, prec)
+	c0Coeff := ToCoeffNegacyclic(c0Eval, ringQ, prec)
+	c1Eval := ConvertFromPolyBig(ringQ, c1Poly, prec)
+	c1Coeff := ToCoeffNegacyclic(c1Eval, ringQ, prec)
+
+	// 6) Final 2×2 sampler
 	p0, p1 := Sample2zField(
 		aFld, bFld, dFld,
-		c0, c1,
+		c0Coeff, c1Coeff,
 		ringQ.N, ringQ.Modulus[0], prec,
 	)
+
 	// fmt.Printf("SamplePz: p0 = %s, p1 = %s\n", p0.Coeffs[0].Real.Text('g', 10), p1.Coeffs[0].Real.Text('g', 10))
 	// 7) Convert p0,p1 back to NTT‐domain polys
 	out := make([]*ring.Poly, expectedLength)
 	P0 := NegacyclicInterpolateElem(p0, ringQ)
-	// for i := 0; i < ringQ.N && i < 50; i++ {
-	// 	fmt.Printf("SamplePz: P0[%d] = %d\n", i, P0.Coeffs[0][i])
-	// }
-	ringQ.NTT(P0, P0)
 	P1 := NegacyclicInterpolateElem(p1, ringQ)
-	// for i := 0; i < ringQ.N && i < 50; i++ {
-	// 	fmt.Printf("SamplePz: P1[%d] = %d\n", i, P1.Coeffs[0][i])
-	// }
+
+	//! ------------------------------------------------------------------
+	//! DEBUG -- sign diagnosis for p0 / p1  vs  (ê̂ᵀ·Q) / (r̂ᵀ·Q)
+	//! ------------------------------------------------------------------
+	{
+		// helper to centre a coeff into (−q/2, q/2]
+		centre := func(v uint64) int64 {
+			q := int64(ringQ.Modulus[0])
+			x := int64(v)
+			if x > q/2 {
+				x -= q
+			}
+			return x
+		}
+
+		// ❶  compute ê̂ᵀ·Q   and   r̂ᵀ·Q   in NTT then go back to COEFF
+		eDotQEval := ringQ.NewPoly() // zero
+		rDotQEval := ringQ.NewPoly() // zero
+		tmp := ringQ.NewPoly()
+		for j := 0; j < k; j++ {
+			// eHat = Ttilde[1][j] ,  rHat = Ttilde[0][j]   (both NTT)
+			ringQ.MulCoeffsMontgomery(Ttilde[1][j], qhat[j], tmp)
+			ringQ.Add(eDotQEval, tmp, eDotQEval)
+
+			ringQ.MulCoeffsMontgomery(Ttilde[0][j], qhat[j], tmp)
+			ringQ.Add(rDotQEval, tmp, rDotQEval)
+		}
+		eDotQCoeff := ringQ.NewPoly()
+		rDotQCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(eDotQEval, eDotQCoeff)
+		ringQ.InvNTT(rDotQEval, rDotQCoeff)
+
+		// ❷  pick the *constant* coefficient 0  for an easy sign test
+		p0c0 := centre(P0.Coeffs[0][0])         // p₀(0)   (Coeff domain)
+		p1c0 := centre(P1.Coeffs[0][0])         // p₁(0)
+		eQc0 := centre(eDotQCoeff.Coeffs[0][0]) // (ê̂ᵀ·Q)(0)
+		rQc0 := centre(rDotQCoeff.Coeffs[0][0]) // (r̂ᵀ·Q)(0)
+
+		fmt.Printf("[SIGN-DIAG]  p0(0)=%d   r·Q(0)=%d   sum=%d\n", p0c0, rQc0, p0c0+rQc0)
+		fmt.Printf("[SIGN-DIAG]  p1(0)=%d   e·Q(0)=%d   sum=%d\n", p1c0, eQc0, p1c0+eQc0)
+
+	}
+
+	//! ------------------------------------------------------------------
+
+	ringQ.NTT(P0, P0)
 	ringQ.NTT(P1, P1)
 	out[0], out[1] = P0, P1
 

@@ -99,7 +99,7 @@ func computeABDUsingCode(ringQ *ring.Ring, s, alpha float64, T [2][]*ring.Poly, 
 	vb = FloatToCoeffNegacyclic(vb, prec)
 	vd = FloatToCoeffNegacyclic(vd, prec)
 
-	scalar := new(big.Float).Neg(zBig)
+	scalar := zBig
 	scalarC := NewBigComplexFromFloat(scalar, new(big.Float).SetPrec(prec).SetFloat64(0))
 
 	a = FieldScalarMulBig(va, scalarC)

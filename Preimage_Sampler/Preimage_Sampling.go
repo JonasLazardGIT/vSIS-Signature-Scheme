@@ -108,10 +108,10 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
-	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
+	// 5) assemble x = [ p₀ - ê⋅zHat,  p₁ - r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
-	// row 0: p[0] + <eHat, zHat>
+	// row 0: p[0] - <eHat, zHat>
 	sum0 := ringQ.NewPoly()
 	tmpez := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
@@ -119,16 +119,16 @@ func GaussSamp(
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
-	ringQ.Add(p[0], sum0, x[0])
+	ringQ.Add(p[0], sum0, x[0]) //! Add or sub ?
 
-	// row 1: p[1] + <rHat, zHat>
+	// row 1: p[1] - <rHat, zHat>
 	sum1 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
 		ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmpez)
 		ringQ.Add(sum1, tmpez, sum1)
 	}
 	x[1] = ringQ.NewPoly()
-	ringQ.Add(p[1], sum1, x[1])
+	ringQ.Add(p[1], sum1, x[1]) //! Add or sub ?
 
 	// rows 2…k+1: just p[i] + zHat[i-2]
 	for i := 2; i < k+2; i++ {
@@ -136,6 +136,67 @@ func GaussSamp(
 		ringQ.Add(p[i], zHat[i-2], x[i])
 	}
 
+	// ---------- DEBUG B : verify x₀ formula and A·x = u ----------
+	if true {
+		// helper to centre a coeff into (−q/2, q/2]
+		centre := func(v uint64) int64 {
+			q := int64(ringQ.Modulus[0])
+			x := int64(v)
+			if x > q/2 {
+				x -= q
+			}
+			return x
+		}
+
+		tmp := ringQ.NewPoly()
+
+		// 1) Compute A·x in NTT, then back to coefficients
+		AxEval := ringQ.NewPoly()
+		for i := range A {
+			ringQ.MulCoeffsMontgomery(A[i], x[i], tmp)
+			ringQ.Add(AxEval, tmp, AxEval)
+		}
+		AxCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(AxEval, AxCoeff)
+
+		// 2) Recover u₀ from coefficient domain
+		uCoeffOrig := ringQ.NewPoly()
+		ringQ.InvNTT(u, uCoeffOrig)
+		u0 := centre(uCoeffOrig.Coeffs[0][0])
+
+		// 3) Inverse‐NTT p₀ and extract constant
+		p0CoeffPoly := ringQ.NewPoly()
+		ringQ.InvNTT(p[0], p0CoeffPoly)
+		p0c0 := centre(p0CoeffPoly.Coeffs[0][0])
+
+		// 4) Inverse‐NTT x₀ and extract constant
+		xCoeffPoly := ringQ.NewPoly()
+		ringQ.InvNTT(x[0], xCoeffPoly)
+		x0 := centre(xCoeffPoly.Coeffs[0][0])
+
+		// 5) Compute e·z in NTT, then back to coeffs
+		eDotZEval := ringQ.NewPoly()
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
+			ringQ.Add(eDotZEval, tmp, eDotZEval)
+		}
+		eDotZCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(eDotZEval, eDotZCoeff)
+		edz0 := centre(eDotZCoeff.Coeffs[0][0])
+
+		ax0 := centre(AxCoeff.Coeffs[0][0])
+
+		fmt.Printf(
+			"Cancel-check: p0=%d  e·z=%d  p0+e·z=%d  x0=%d  Ax0=%d  u0=%d\n",
+			p0c0,
+			edz0,
+			p0c0+edz0,
+			x0,
+			ax0,
+			u0,
+		)
+	}
+	// ---------- END DEBUG B ----------
 	return x
 }
 

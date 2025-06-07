@@ -1,6 +1,7 @@
 package Preimage_Sampler
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -311,6 +312,23 @@ func SampleGDiscrete(
 		Z[k-1][j] = int64(modDigits[k-1])*int64(z[k-1]) -
 			int64(z[k-2]) +
 			int64(vDigits[k-1])
+
+			//! ---------- DEBUG A : verify Σ t_i·t^i = sub[j] ----------
+		if j < 8 { // limit noise; increase if needed
+			q := int64(ringQ.Modulus[0]) // import ringQ via closure or param
+			recomb := int64(0)
+			for idx := k - 1; idx >= 0; idx-- {
+				recomb = (recomb*int64(base) + Z[idx][j]) % q
+			}
+			diff := (recomb - int64(uCoeff[j])) % q
+			if diff < 0 {
+				diff += q
+			}
+			fmt.Printf("G-recomb j=%d : v0=%d  zLast=%d  t0=%d  recomb=%d  want=%d  diff=%d\n",
+				j, uCoeff[j], Z[k-1][j], Z[0][j], recomb, uCoeff[j], diff)
+		}
+		//! ----------------------------------------------------------
+
 	}
 
 	return Z
