@@ -364,7 +364,6 @@ func SamplePz(
 		c1Poly.Coeffs[0][i] = SignedToUnsigned(s1, ringQ.Modulus[0])
 	}
 
-	// 1) Convert c0Poly (a *ring.Poly* in coeff‐domain) into a field‐element in Eval
 	c0Eval := ConvertFromPolyBig(ringQ, c0Poly, prec)
 	c0Coeff := ToCoeffNegacyclic(c0Eval, ringQ, prec)
 	c1Eval := ConvertFromPolyBig(ringQ, c1Poly, prec)

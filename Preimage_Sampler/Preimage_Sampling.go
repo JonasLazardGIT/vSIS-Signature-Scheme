@@ -119,7 +119,7 @@ func GaussSamp(
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
-	ringQ.Add(p[0], sum0, x[0]) //! Add or sub ?
+	ringQ.Add(p[0], sum0, x[0])
 
 	// row 1: p[1] - <rHat, zHat>
 	sum1 := ringQ.NewPoly()
@@ -128,7 +128,7 @@ func GaussSamp(
 		ringQ.Add(sum1, tmpez, sum1)
 	}
 	x[1] = ringQ.NewPoly()
-	ringQ.Add(p[1], sum1, x[1]) //! Add or sub ?
+	ringQ.Add(p[1], sum1, x[1])
 
 	// rows 2…k+1: just p[i] + zHat[i-2]
 	for i := 2; i < k+2; i++ {
@@ -136,7 +136,7 @@ func GaussSamp(
 		ringQ.Add(p[i], zHat[i-2], x[i])
 	}
 
-	// ---------- DEBUG B : verify x₀ formula and A·x = u ----------
+	//! ---------- DEBUG B : verify x₀ formula and A·x = u ----------
 	if true {
 		// helper to centre a coeff into (−q/2, q/2]
 		centre := func(v uint64) int64 {
@@ -190,13 +190,38 @@ func GaussSamp(
 			"Cancel-check: p0=%d  e·z=%d  p0+e·z=%d  x0=%d  Ax0=%d  u0=%d\n",
 			p0c0,
 			edz0,
-			p0c0+edz0,
+			(p0c0 + edz0),
 			x0,
 			ax0,
 			u0,
 		)
+
+		p1CoeffPoly := ringQ.NewPoly()
+		ringQ.InvNTT(p[1], p1CoeffPoly)
+		p1c0 := centre(p1CoeffPoly.Coeffs[0][0])
+
+		x1CoeffPoly := ringQ.NewPoly()
+		ringQ.InvNTT(x[1], x1CoeffPoly)
+		x1 := centre(x1CoeffPoly.Coeffs[0][0])
+
+		rDotZEval := ringQ.NewPoly()
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
+			ringQ.Add(rDotZEval, tmp, rDotZEval)
+		}
+		rDotZCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(rDotZEval, rDotZCoeff)
+		rdz0 := centre(rDotZCoeff.Coeffs[0][0])
+
+		fmt.Printf(
+			"Cancel-check x1: p1=%d  r·z=%d  p1+r·z=%d  x1=%d\n",
+			p1c0,
+			rdz0,
+			p1c0+rdz0,
+			x1,
+		)
 	}
-	// ---------- END DEBUG B ----------
+	//! ---------- END DEBUG B ----------
 	return x
 }
 
