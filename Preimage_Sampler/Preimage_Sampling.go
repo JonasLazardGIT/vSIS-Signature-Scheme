@@ -220,6 +220,54 @@ func GaussSamp(
 			p1c0+rdz0,
 			x1,
 		)
+
+		//! ---------- DEBUG C : verify gadget rows ----------
+		G := CreateGadgetMatrix(ringQ, base, 1, k)
+		for j := 0; j < k; j++ {
+			ringQ.NTT(G[j], G[j])
+		}
+
+		for j := 0; j < k; j++ {
+			evalGad := ringQ.NewPoly()
+			evalGp := ringQ.NewPoly()
+			evalGz := ringQ.NewPoly()
+
+			ringQ.MulCoeffsMontgomery(A[j+2], x[j+2], evalGad)
+			ringQ.MulCoeffsMontgomery(G[j], p[j+2], evalGp)
+			ringQ.MulCoeffsMontgomery(G[j], zHat[j], evalGz)
+
+			// (a*rHat_j + eHat_j) * x_{j+2}
+			trapTerm := ringQ.NewPoly()
+			ringQ.MulCoeffsMontgomery(A[1], rHat[j], trapTerm)
+			ringQ.Add(trapTerm, eHat[j], trapTerm)
+			ringQ.MulCoeffsMontgomery(trapTerm, x[j+2], trapTerm)
+
+			coeffGad := ringQ.NewPoly()
+			coeffGp := ringQ.NewPoly()
+			coeffGz := ringQ.NewPoly()
+			coeffTrap := ringQ.NewPoly()
+
+			ringQ.InvNTT(evalGad, coeffGad)
+			ringQ.InvNTT(evalGp, coeffGp)
+			ringQ.InvNTT(evalGz, coeffGz)
+			ringQ.InvNTT(trapTerm, coeffTrap)
+
+			rhs := ringQ.NewPoly()
+			ringQ.Add(coeffGp, coeffGz, rhs)
+			ringQ.Sub(rhs, coeffTrap, rhs)
+
+			diff := ringQ.NewPoly()
+			ringQ.Sub(coeffGad, rhs, diff)
+
+			fmt.Printf(
+				"Gad-row %d: left=%d right=%d diff=%d\n",
+				j,
+				centre(coeffGad.Coeffs[0][0]),
+				centre(rhs.Coeffs[0][0]),
+				centre(diff.Coeffs[0][0]),
+			)
+		}
+		//! ------- END DEBUG C -------
 	}
 	//! ---------- END DEBUG B ----------
 	return x
