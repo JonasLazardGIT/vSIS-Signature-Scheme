@@ -159,20 +159,13 @@ func GaussSamp(
 		AxCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(AxEval, AxCoeff)
 
-		// 2) Recover u₀ from coefficient domain
-		uCoeffOrig := ringQ.NewPoly()
-		ringQ.InvNTT(u, uCoeffOrig)
-		u0 := centre(uCoeffOrig.Coeffs[0][0])
-
 		// 3) Inverse‐NTT p₀ and extract constant
 		p0CoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(p[0], p0CoeffPoly)
-		p0c0 := centre(p0CoeffPoly.Coeffs[0][0])
 
-		// 4) Inverse‐NTT x₀ and extract constant
+		// 4) Inverse‐NTT x₀
 		xCoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(x[0], xCoeffPoly)
-		x0 := centre(xCoeffPoly.Coeffs[0][0])
 
 		// 5) Compute e·z in NTT, then back to coeffs
 		eDotZEval := ringQ.NewPoly()
@@ -182,28 +175,20 @@ func GaussSamp(
 		}
 		eDotZCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(eDotZEval, eDotZCoeff)
-		edz0 := centre(eDotZCoeff.Coeffs[0][0])
-
-		ax0 := centre(AxCoeff.Coeffs[0][0])
-
-		fmt.Printf(
-			"Cancel-check: p0=%d  e·z=%d  p0+e·z=%d  x0=%d  Ax0=%d  u0=%d\n",
-			p0c0,
-			edz0,
-			(p0c0 + edz0),
-			x0,
-			ax0,
-			u0,
-		)
+		// coefficient-wise cancel check for x0
+		for t := 0; t < ringQ.N; t++ {
+			p0t := centre(p0CoeffPoly.Coeffs[0][t])
+			ez := centre(eDotZCoeff.Coeffs[0][t])
+			xt := centre(xCoeffPoly.Coeffs[0][t])
+			if p0t+ez != xt {
+				log.Fatalf("Cancel-check x0 mismatch slot %d: p0=%d e·z=%d sum=%d x0=%d", t, p0t, ez, p0t+ez, xt)
+			}
+		}
 
 		p1CoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(p[1], p1CoeffPoly)
-		p1c0 := centre(p1CoeffPoly.Coeffs[0][0])
-
 		x1CoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(x[1], x1CoeffPoly)
-		x1 := centre(x1CoeffPoly.Coeffs[0][0])
-
 		rDotZEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
 			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
@@ -211,15 +196,14 @@ func GaussSamp(
 		}
 		rDotZCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(rDotZEval, rDotZCoeff)
-		rdz0 := centre(rDotZCoeff.Coeffs[0][0])
-
-		fmt.Printf(
-			"Cancel-check x1: p1=%d  r·z=%d  p1+r·z=%d  x1=%d\n",
-			p1c0,
-			rdz0,
-			p1c0+rdz0,
-			x1,
-		)
+		for t := 0; t < ringQ.N; t++ {
+			p1t := centre(p1CoeffPoly.Coeffs[0][t])
+			rz := centre(rDotZCoeff.Coeffs[0][t])
+			xt := centre(x1CoeffPoly.Coeffs[0][t])
+			if p1t+rz != xt {
+				log.Fatalf("Cancel-check x1 mismatch slot %d: p1=%d r·z=%d sum=%d x1=%d", t, p1t, rz, p1t+rz, xt)
+			}
+		}
 
 		//! ---------- DEBUG C : verify gadget rows ----------
 		G := CreateGadgetMatrix(ringQ, base, 1, k)
@@ -317,9 +301,13 @@ func Main() {
 		sum := ringQ.NewPoly()
 		ringQ.Add(tmp, trap.A2[j], sum)
 
-		// check sum == G[j]
-		if !ringQ.Equal(sum, G[j]) {
-			panic(fmt.Sprintf("TrapGen self-check failed at j=%d", j))
+		// check sum == G[j] coefficient-wise
+		for t := 0; t < ringQ.N; t++ {
+			want := G[j].Coeffs[0][t]
+			got := sum.Coeffs[0][t]
+			if want != got {
+				log.Fatalf("TrapGen self-check failed at row %d, slot %d: got %d want %d", j, t, got, want)
+			}
 		}
 	}
 	fmt.Println("✔ Trapdoor generation self-check passed")
