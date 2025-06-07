@@ -314,18 +314,35 @@ func SamplePz(
 	// ---------------------------
 	c0Poly := ringQ.NewPoly() // coefficient‐domain accumulator
 	c1Poly := ringQ.NewPoly()
+	rDotQEval := ringQ.NewPoly()
+	eDotQEval := ringQ.NewPoly()
 	tmp := ringQ.NewPoly()
 
-	// (a) accumulate inner‐products in coeff domain
+	// (a) accumulate inner‐products in evaluation domain
 	for j := 0; j < k; j++ {
-		// extract Q_j in coeff form
-		ringQ.InvNTT(qhat[j], tmp) // tmp ← Q_j (coeff)
-		// accumulate r̂_j·Q_j and ê̂_j·Q_j
-		ringQ.MulCoeffsMontgomery(Ttilde[0][j], tmp, tmp)
-		ringQ.Add(c0Poly, tmp, c0Poly)
-		ringQ.MulCoeffsMontgomery(Ttilde[1][j], tmp, tmp)
-		ringQ.Add(c1Poly, tmp, c1Poly)
+		ringQ.MulCoeffsMontgomery(Ttilde[0][j], qhat[j], tmp)
+		ringQ.Add(rDotQEval, tmp, rDotQEval)
+
+		ringQ.MulCoeffsMontgomery(Ttilde[1][j], qhat[j], tmp)
+		ringQ.Add(eDotQEval, tmp, eDotQEval)
 	}
+
+	// convert to coefficient domain
+	ringQ.InvNTT(rDotQEval, c0Poly)
+	ringQ.InvNTT(eDotQEval, c1Poly)
+
+	// debug: show inner products before scaling
+	centre := func(v uint64) int64 {
+		q := int64(ringQ.Modulus[0])
+		x := int64(v)
+		if x > q/2 {
+			x -= q
+		}
+		return x
+	}
+	r0 := centre(c0Poly.Coeffs[0][0])
+	e0 := centre(c1Poly.Coeffs[0][0])
+	fmt.Printf("SamplePz: inner r·Q(0)=%d, e·Q(0)=%d\n", r0, e0)
 
 	// (b) scale each coefficient by –z and round to nearest integer mod q
 	zF, _ := zBig.Float64()
@@ -352,6 +369,10 @@ func SamplePz(
 	c0Coeff := ToCoeffNegacyclic(c0Eval, ringQ, prec)
 	c1Eval := ConvertFromPolyBig(ringQ, c1Poly, prec)
 	c1Coeff := ToCoeffNegacyclic(c1Eval, ringQ, prec)
+
+	fmt.Printf("SamplePz: c0 = %s, c1 = %s\n",
+		c0Coeff.Coeffs[0].Real.Text('g', 10),
+		c1Coeff.Coeffs[0].Real.Text('g', 10))
 
 	// 6) Final 2×2 sampler
 	p0, p1 := Sample2zField(
