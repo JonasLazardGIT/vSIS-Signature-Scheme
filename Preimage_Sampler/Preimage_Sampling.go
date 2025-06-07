@@ -259,13 +259,12 @@ func GaussSamp(
 			diff := ringQ.NewPoly()
 			ringQ.Sub(coeffGad, rhs, diff)
 
-			fmt.Printf(
-				"Gad-row %d: left=%d right=%d diff=%d\n",
-				j,
-				centre(coeffGad.Coeffs[0][0]),
-				centre(rhs.Coeffs[0][0]),
-				centre(diff.Coeffs[0][0]),
-			)
+			for t := 0; t < ringQ.N; t++ {
+				if centre(diff.Coeffs[0][t]) != 0 {
+					log.Fatalf("Gad-row %d, slot %d: diff = %d ≠ 0", j, t, centre(diff.Coeffs[0][t]))
+				}
+			}
+			fmt.Printf("Gad-row %d: all %d coefficients matched\n", j, ringQ.N)
 		}
 		//! ------- END DEBUG C -------
 	}
