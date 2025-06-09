@@ -108,7 +108,7 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
-	// 5) assemble x = [ p₀ - ê⋅zHat,  p₁ - r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
+	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
 	// row 0: p[0] - <eHat, zHat>
@@ -187,9 +187,9 @@ func GaussSamp(
 			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
 		}
 		ringQ.MulCoeffsMontgomery(A[0], eDotZEvalAcc, tmp)
-		ringQ.Sub(AzEval, tmp, AzEval)
+		ringQ.Add(AzEval, tmp, AzEval)
 		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, tmp)
-		ringQ.Sub(AzEval, tmp, AzEval)
+		ringQ.Add(AzEval, tmp, AzEval)
 
 		AzCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(AzEval, AzCoeff)
