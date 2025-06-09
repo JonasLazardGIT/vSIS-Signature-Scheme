@@ -212,6 +212,9 @@ func GaussSamp(
 			if p1tplusrz < 0 && xt >= 0 {
 				p1tplusrz += int64(ringQ.Modulus[0])
 			}
+			if p1tplusrz > 0 && xt < 0 {
+				p1tplusrz -= int64(ringQ.Modulus[0])
+			}
 			if p1tplusrz != xt {
 				log.Fatalf("Cancel-check x1 mismatch slot %d: p1=%d r·z=%d sum=%d x1=%d", t, p1t, rz, p1tplusrz, xt)
 			}
