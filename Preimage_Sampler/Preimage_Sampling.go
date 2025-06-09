@@ -119,6 +119,8 @@ func GaussSamp(
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
+	// In the PALISADE C++ implementation these terms are added
+	// when forming the first two rows of x.
 	ringQ.Add(p[0], sum0, x[0])
 
 	// row 1: p[1] - <rHat, zHat>
@@ -128,6 +130,7 @@ func GaussSamp(
 		ringQ.Add(sum1, tmpez, sum1)
 	}
 	x[1] = ringQ.NewPoly()
+	// PALISADE also adds here
 	ringQ.Add(p[1], sum1, x[1])
 
 	// rows 2…k+1: just p[i] + zHat[i-2]
@@ -159,6 +162,40 @@ func GaussSamp(
 		AxCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(AxEval, AxCoeff)
 
+		// 1b) also compute A·p and A·z separately for diagnostics
+		ApEval := ringQ.NewPoly()
+		for i := range p {
+			ringQ.MulCoeffsMontgomery(A[i], p[i], tmp)
+			ringQ.Add(ApEval, tmp, ApEval)
+		}
+		ApCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(ApEval, ApCoeff)
+
+		AzEval := ringQ.NewPoly()
+		// contributions from gadget columns
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(A[j+2], zHat[j], tmp)
+			ringQ.Add(AzEval, tmp, AzEval)
+		}
+		// contributions from x0,x1 parts
+		eDotZEvalAcc := ringQ.NewPoly()
+		rDotZEvalAcc := ringQ.NewPoly()
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
+			ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
+			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
+			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
+		}
+		ringQ.MulCoeffsMontgomery(A[0], eDotZEvalAcc, tmp)
+		ringQ.Sub(AzEval, tmp, AzEval)
+		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, tmp)
+		ringQ.Sub(AzEval, tmp, AzEval)
+
+		AzCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(AzEval, AzCoeff)
+
+		fmt.Printf("[CHECK] A·p coeff[0]=%d  A·z coeff[0]=%d\n", UnsignedToSigned(ApCoeff.Coeffs[0][0], ringQ.Modulus[0]), UnsignedToSigned(AzCoeff.Coeffs[0][0], ringQ.Modulus[0]))
+
 		// 3) Inverse‐NTT p₀ and extract constant
 		p0CoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(p[0], p0CoeffPoly)
@@ -189,7 +226,6 @@ func GaussSamp(
 			}
 			if p0tplusEz != xt {
 				log.Fatalf("Cancel-check x0 mismatch slot %d: p0=%d e·z=%d sum=%d x0=%d", t, p0t, ez, p0tplusEz, xt)
-
 			}
 		}
 

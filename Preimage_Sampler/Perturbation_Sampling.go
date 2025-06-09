@@ -355,6 +355,17 @@ func SamplePz(
 		// multiply by –z and round
 		s0 := int64(math.Round(-zF * float64(v0)))
 		c0Poly.Coeffs[0][i] = SignedToUnsigned(s0, ringQ.Modulus[0])
+		// verify modular reduction is exact
+		expect := s0 % int64(ringQ.Modulus[0])
+		if expect > int64(ringQ.Modulus[0])/2 {
+			expect -= int64(ringQ.Modulus[0])
+		}
+		if expect < -int64(ringQ.Modulus[0])/2 {
+			expect += int64(ringQ.Modulus[0])
+		}
+		if UnsignedToSigned(c0Poly.Coeffs[0][i], ringQ.Modulus[0]) != expect {
+			log.Fatalf("rounding check failed for c0 coeff %d", i)
+		}
 
 		v1 := int64(c1Poly.Coeffs[0][i])
 		if v1 > int64(ringQ.Modulus[0]/2) {
@@ -362,6 +373,16 @@ func SamplePz(
 		}
 		s1 := int64(math.Round(-zF * float64(v1)))
 		c1Poly.Coeffs[0][i] = SignedToUnsigned(s1, ringQ.Modulus[0])
+		expect1 := s1 % int64(ringQ.Modulus[0])
+		if expect1 > int64(ringQ.Modulus[0])/2 {
+			expect1 -= int64(ringQ.Modulus[0])
+		}
+		if expect1 < -int64(ringQ.Modulus[0])/2 {
+			expect1 += int64(ringQ.Modulus[0])
+		}
+		if UnsignedToSigned(c1Poly.Coeffs[0][i], ringQ.Modulus[0]) != expect1 {
+			log.Fatalf("rounding check failed for c1 coeff %d", i)
+		}
 	}
 
 	c0Eval := ConvertFromPolyBig(ringQ, c0Poly, prec)
