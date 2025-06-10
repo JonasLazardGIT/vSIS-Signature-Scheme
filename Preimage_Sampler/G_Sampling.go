@@ -126,8 +126,8 @@ func TrapGen(ringQ *ring.Ring, base uint64, sigmaT float64) Trapdoor {
 		one.Coeffs[lvl][0] = 1
 	}
 	ringQ.NTT(one, one) // send to EVALUATION
-	A1 := []*ring.Poly{one, a}
 
+	A1 := []*ring.Poly{one, a}
 	// 6) flatten A = [ A₁ ∥ A₂ ]
 	A := append(A1, A2...)
 
