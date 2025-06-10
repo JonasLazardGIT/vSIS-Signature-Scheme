@@ -24,7 +24,8 @@ func SpectralBound(n, k int, base uint64) float64 {
 	return spectralConst * float64(base+1) * sig2 * term
 }
 
-// calculateParams computes σₜ=(t+1)σ and
+// calculateParams computes σₜ=(t+1)σ and returns the spectral bound s
+// used for perturbation sampling.
 func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
 	sigma := 3.19                    // smoothing parameter from Sec V-A1
 	sigmaT = float64(base+1) * sigma // σₜ = (t+1)·σ
@@ -76,7 +77,7 @@ func GaussSamp(
 ) []*ring.Poly {
 	N := ringQ.N
 	// 1) perturbation: p ∈ Z^{(k+2)×N}
-	p := SamplePz(ringQ, s, (2+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+int(base), 256)
+	p := SamplePz(ringQ, s, (2+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
 
 	// 2) compute sub = u - A·p in EVAL, then back to COEFF
 	pertEval := ringQ.NewPoly()
@@ -99,9 +100,8 @@ func GaussSamp(
 		uCoeffs[j] = SignedToUnsigned(signed, ringQ.Modulus[0])
 
 	}
-	dgg := NewDiscreteGaussian(sigma) // discrete Gaussian sampler for G-sampling
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
-	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k, dgg)
+	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
 
 	// Zmat is a matrix of integers Z ∈ ℤ^{κ×N} where each row is a poly in R_q
 
@@ -111,7 +111,7 @@ func GaussSamp(
 	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
-	// row 0: p[0] - <eHat, zHat>
+	// row 0: p[0] + <eHat, zHat>
 	sum0 := ringQ.NewPoly()
 	tmpez := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
@@ -123,7 +123,7 @@ func GaussSamp(
 	// when forming the first two rows of x.
 	ringQ.Add(p[0], sum0, x[0])
 
-	// row 1: p[1] - <rHat, zHat>
+	// row 1: p[1] + <rHat, zHat>
 	sum1 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
 		ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmpez)
