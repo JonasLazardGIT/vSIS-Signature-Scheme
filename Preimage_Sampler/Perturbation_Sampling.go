@@ -108,9 +108,9 @@ func Sample2zField(
 			diff1 := new(big.Float).SetPrec(prec).Sub(q1F, c1F)
 
 			assert(new(big.Float).SetPrec(prec).Abs(diff0).Cmp(half) <= 0,
-				"|q0-c0′|>0.5 at slot %d, distance is %s", i, new(big.Float).SetPrec(prec).Abs(diff0).Text('g', 10))
+				"|q0-c0′|>0.5 at slot %d, distance is %s, q0 = %s, c0' = %s", i, new(big.Float).SetPrec(prec).Abs(diff0).Text('g', 10), q0F.Text('g', 10), c0pExp.Text('g', 10))
 			assert(new(big.Float).SetPrec(prec).Abs(diff1).Cmp(half) <= 0,
-				"|q1-c1|>0.5 at slot %d, distance is %s", i, new(big.Float).SetPrec(prec).Abs(diff1).Text('g', 10))
+				"|q1-c1|>0.5 at slot %d, distance is %s, q1 = %s", i, new(big.Float).SetPrec(prec).Abs(diff1).Text('g', 10), q1F.Text('g', 10))
 
 			// (C) f = a - b²/d
 			b2d := new(big.Float).SetPrec(prec).Mul(bF, bF)
