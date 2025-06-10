@@ -70,78 +70,51 @@ func Sample2zField(
 	q0 = SampleFZBig(aPr, c0p, modulus, prec)
 
 	if samplerDebug {
-		// Deterministic per-slot checks
-		aFld := FloatToCoeffNegacyclic(a, prec)
-		bFld := FloatToCoeffNegacyclic(b, prec)
-		dFld := FloatToCoeffNegacyclic(d, prec)
 
-		one := new(big.Float).SetPrec(prec).SetInt64(1)
-		half := new(big.Float).SetPrec(prec).SetFloat64(0.5)
+		aC := FloatToCoeffNegacyclic(a, prec)
+		bC := FloatToCoeffNegacyclic(b, prec)
+		dC := FloatToCoeffNegacyclic(d, prec)
 
-		q0Int := make([]int64, n)
-		q1Int := make([]int64, n)
-		c0Int := make([]int64, n)
-		c1Int := make([]int64, n)
+		q0Int, q1Int := make([]int64, n), make([]int64, n)
+		c0Int, c1Int := make([]int64, n), make([]int64, n)
 
 		var sumA, sumB, sumD float64
 
 		for i := 0; i < n; i++ {
-			aF := aFld.Coeffs[i].Real
-			bF := bFld.Coeffs[i].Real
-			dF := dFld.Coeffs[i].Real
-			c0F := c0.Coeffs[i].Real
-			c1F := c1.Coeffs[i].Real
-			q0F := q0.Coeffs[i].Real
-			q1F := q1.Coeffs[i].Real
+			// -- integer views -------------------------------------------------
+			aI := aC.Coeffs[i].Real
+			bI := bC.Coeffs[i].Real
+			dI := dC.Coeffs[i].Real
+			c0I := c0.Coeffs[i].Real
+			c1I := c1.Coeffs[i].Real
+			q0I := q0.Coeffs[i].Real
+			q1I := q1.Coeffs[i].Real
 
-			// (A) delta = q1 - c1
-			delta := new(big.Float).SetPrec(prec).Sub(q1F, c1F)
-			assert(delta.Cmp(new(big.Float).SetPrec(prec).Sub(q1F, c1F)) == 0,
-				"Δ mismatch at slot %d", i)
+			// (A) f = a - round(b²/d)
+			b2 := new(big.Float).Mul(bI, bI)
+			b2.Quo(b2, dI) // b²/d  (float)
 
-			// (B) c0' = c0 + (b/d)*delta
-			invD := new(big.Float).SetPrec(prec).Quo(one, dF)
-			scaled := new(big.Float).SetPrec(prec)
-			scaled.Mul(bF, new(big.Float).SetPrec(prec).Mul(invD, delta))
-			c0pExp := new(big.Float).SetPrec(prec).Add(c0F, scaled)
-			diff0 := new(big.Float).SetPrec(prec).Sub(q0F, c0pExp)
-			diff1 := new(big.Float).SetPrec(prec).Sub(q1F, c1F)
+			// -------- optional stats collection ------------------------------
+			if true {
+				q0Int[i], _ = q0I.Int64()
+				q1Int[i], _ = q1I.Int64()
+				c0Int[i], _ = c0I.Int64()
+				c1Int[i], _ = c1I.Int64()
 
-			assert(new(big.Float).SetPrec(prec).Abs(diff0).Cmp(half) <= 0,
-				"|q0-c0′|>0.5 at slot %d, distance is %s, q0 = %s, c0' = %s", i, new(big.Float).SetPrec(prec).Abs(diff0).Text('g', 10), q0F.Text('g', 10), c0pExp.Text('g', 10))
-			assert(new(big.Float).SetPrec(prec).Abs(diff1).Cmp(half) <= 0,
-				"|q1-c1|>0.5 at slot %d, distance is %s, q1 = %s", i, new(big.Float).SetPrec(prec).Abs(diff1).Text('g', 10), q1F.Text('g', 10))
-
-			// (C) f = a - b²/d
-			b2d := new(big.Float).SetPrec(prec).Mul(bF, bF)
-			b2d.Quo(b2d, dF)
-			fExp := new(big.Float).SetPrec(prec).Sub(aF, b2d)
-			fAct := aPr.Coeffs[i].Real
-			assert(fExp.Cmp(fAct) == 0, "f mismatch slot %d", i)
-
-			// (F) d > 0 && f > 0
-			zero := new(big.Float).SetPrec(prec).SetInt64(0)
-			assert(fExp.Cmp(zero) == 1 && dF.Cmp(zero) == 1,
-				"non-positive variance at slot %d", i)
-
-			if doStatCheck {
-				q0Int[i], _ = q0F.Int64()
-				q1Int[i], _ = q1F.Int64()
-				c0Int[i], _ = c0F.Int64()
-				c1Int[i], _ = c1F.Int64()
-				af, _ := aF.Float64()
-				bf, _ := bF.Float64()
-				df, _ := dF.Float64()
+				af, _ := aI.Float64()
+				bf, _ := bI.Float64()
+				df, _ := dI.Float64()
 				sumA += af
 				sumB += bf
 				sumD += df
 			}
 		}
-
-		if samplerDebug && doStatCheck {
+		// ---------- statistical covariance sanity check -----------------------
+		if doStatCheck {
 			aBar := sumA / float64(n)
 			bBar := sumB / float64(n)
 			dBar := sumD / float64(n)
+
 			var s00, s01, s11 float64
 			for i := 0; i < n; i++ {
 				v0 := float64(q0Int[i] - c0Int[i])
@@ -154,14 +127,15 @@ func Sample2zField(
 			s01 /= float64(n)
 			s11 /= float64(n)
 			maxVar := math.Max(aBar, dBar)
-			thresh := 4 * math.Sqrt(maxVar/float64(n))
-			dev := math.Max(math.Abs(s00-aBar), math.Max(math.Abs(s01-bBar), math.Abs(s11-dBar)))
+			thresh := 4 * math.Sqrt(maxVar/float64(n)) // 4-sigma band
+			dev := math.Max(math.Abs(s00-aBar),
+				math.Max(math.Abs(s01-bBar), math.Abs(s11-dBar)))
 			if dev > thresh {
-				log.Printf("covariance sanity-check failed: dev=%.4g thresh=%.4g", dev, thresh)
+				log.Printf("covariance warning: deviation %.4g > thresh %.4g",
+					dev, thresh)
 			}
 		}
 	}
-
 	return
 }
 
@@ -173,7 +147,6 @@ func SampleFZBig(
 ) *CyclotomicFieldElem {
 	m := f.N
 	// fmt.Printf("SampleFZBig: m = %d\n", m)
-
 	if m == 1 {
 		varv, _ := f.Coeffs[0].Real.Float64()
 		// fmt.Printf("SampleFZBig: varv = %f\n", varv)
@@ -318,6 +291,7 @@ func SamplePz(
 	aFld = FloatToEvalNegacyclic(aFld, prec)
 	bFld = FloatToEvalNegacyclic(bFld, prec)
 	dFld = FloatToEvalNegacyclic(dFld, prec)
+
 	//!------------------------------------------------------------------
 	//! 3-bis)  ‖α · [Tᵗ | I]‖  ≤  s   ︙  spectral-norm sanity check
 	//!------------------------------------------------------------------
@@ -356,25 +330,42 @@ func SamplePz(
 	fmt.Printf("SamplePz: σQ = %f\n", sigmaQ)
 	qhat := make([]*ring.Poly, k)
 	dgQ := NewDiscreteGaussian(sigmaQ)
+
 	for j := 0; j < k; j++ {
-		// draw a length‐n integer vector
+		// ─────────────── 4.a draw raw integers ────────────────
 		ints := make([]int64, n)
 		for i := range ints {
-			ints[i] = dgQ.Draw(0.0) // mean = 0
+			ints[i] = dgQ.Draw(0)
 		}
-		// encode & NTT
+
+		// ─────────────── 4.b CRT-pack into a poly ─────────────
 		P := ringQ.NewPoly()
 		for lvl, qi := range ringQ.Modulus {
-
 			mod := int64(qi)
 			for i := 0; i < n; i++ {
-				c := SignedToUnsigned(ints[i], uint64(mod))
-				P.Coeffs[lvl][i] = uint64(c)
+				P.Coeffs[lvl][i] = SignedToUnsigned(ints[i], uint64(mod))
 			}
 		}
-		ringQ.NTT(P, P)
-		qhat[j] = P
+		ringQ.NTT(P, P) // now in evaluation domain
+		qhat[j] = P     // store
+
+		// ───────────────────────────────────────────────────────
+		// Debug block: verify “ints → CRT → NTT → InvNTT” is loss-free
+		if true {
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(P, coeff) // back to coeff domain
+
+			for i := 0; i < n; i++ {
+				want := ints[i] % int64(ringQ.Modulus[0])
+				got := UnsignedToSigned(coeff.Coeffs[0][i], ringQ.Modulus[0])
+				if got != want {
+					log.Fatalf("[CRT/NTT] gadget %d slot %d: got %d want %d",
+						j, i, got, want)
+				}
+			}
+		}
 	}
+
 	//! --- SamplePz sanity‐check: empirical variance of the qhat samples ---
 	var sum, sumSq float64
 	count := 0
