@@ -68,6 +68,100 @@ func Sample2zField(
 	// fmt.Printf("Sample2zField: c0′ = %s\n", c0p.Coeffs[0].Real.Text('g', 10))
 
 	q0 = SampleFZBig(aPr, c0p, modulus, prec)
+
+	if samplerDebug {
+		// Deterministic per-slot checks
+		aFld := FloatToCoeffNegacyclic(a, prec)
+		bFld := FloatToCoeffNegacyclic(b, prec)
+		dFld := FloatToCoeffNegacyclic(d, prec)
+
+		one := new(big.Float).SetPrec(prec).SetInt64(1)
+		half := new(big.Float).SetPrec(prec).SetFloat64(0.5)
+
+		q0Int := make([]int64, n)
+		q1Int := make([]int64, n)
+		c0Int := make([]int64, n)
+		c1Int := make([]int64, n)
+
+		var sumA, sumB, sumD float64
+
+		for i := 0; i < n; i++ {
+			aF := aFld.Coeffs[i].Real
+			bF := bFld.Coeffs[i].Real
+			dF := dFld.Coeffs[i].Real
+			c0F := c0.Coeffs[i].Real
+			c1F := c1.Coeffs[i].Real
+			q0F := q0.Coeffs[i].Real
+			q1F := q1.Coeffs[i].Real
+
+			// (A) delta = q1 - c1
+			delta := new(big.Float).SetPrec(prec).Sub(q1F, c1F)
+			assert(delta.Cmp(new(big.Float).SetPrec(prec).Sub(q1F, c1F)) == 0,
+				"Δ mismatch at slot %d", i)
+
+			// (B) c0' = c0 + (b/d)*delta
+			invD := new(big.Float).SetPrec(prec).Quo(one, dF)
+			scaled := new(big.Float).SetPrec(prec)
+			scaled.Mul(bF, new(big.Float).SetPrec(prec).Mul(invD, delta))
+			c0pExp := new(big.Float).SetPrec(prec).Add(c0F, scaled)
+			diff0 := new(big.Float).SetPrec(prec).Sub(q0F, c0pExp)
+			diff1 := new(big.Float).SetPrec(prec).Sub(q1F, c1F)
+
+			assert(new(big.Float).SetPrec(prec).Abs(diff0).Cmp(half) <= 0,
+				"|q0-c0′|>0.5 at slot %d", i)
+			assert(new(big.Float).SetPrec(prec).Abs(diff1).Cmp(half) <= 0,
+				"|q1-c1|>0.5 at slot %d", i)
+
+			// (C) f = a - b²/d
+			b2d := new(big.Float).SetPrec(prec).Mul(bF, bF)
+			b2d.Quo(b2d, dF)
+			fExp := new(big.Float).SetPrec(prec).Sub(aF, b2d)
+			fAct := aPr.Coeffs[i].Real
+			assert(fExp.Cmp(fAct) == 0, "f mismatch slot %d", i)
+
+			// (F) d > 0 && f > 0
+			zero := new(big.Float).SetPrec(prec).SetInt64(0)
+			assert(fExp.Cmp(zero) == 1 && dF.Cmp(zero) == 1,
+				"non-positive variance at slot %d", i)
+
+			if doStatCheck {
+				q0Int[i], _ = q0F.Int64()
+				q1Int[i], _ = q1F.Int64()
+				c0Int[i], _ = c0F.Int64()
+				c1Int[i], _ = c1F.Int64()
+				af, _ := aF.Float64()
+				bf, _ := bF.Float64()
+				df, _ := dF.Float64()
+				sumA += af
+				sumB += bf
+				sumD += df
+			}
+		}
+
+		if samplerDebug && doStatCheck {
+			aBar := sumA / float64(n)
+			bBar := sumB / float64(n)
+			dBar := sumD / float64(n)
+			var s00, s01, s11 float64
+			for i := 0; i < n; i++ {
+				v0 := float64(q0Int[i] - c0Int[i])
+				v1 := float64(q1Int[i] - c1Int[i])
+				s00 += v0 * v0
+				s01 += v0 * v1
+				s11 += v1 * v1
+			}
+			s00 /= float64(n)
+			s01 /= float64(n)
+			s11 /= float64(n)
+			maxVar := math.Max(aBar, dBar)
+			thresh := 4 * math.Sqrt(maxVar/float64(n))
+			dev := math.Max(math.Abs(s00-aBar), math.Max(math.Abs(s01-bBar), math.Abs(s11-dBar)))
+			if dev > thresh {
+				log.Printf("covariance sanity-check failed: dev=%.4g thresh=%.4g", dev, thresh)
+			}
+		}
+	}
+
 	return
 }
 
