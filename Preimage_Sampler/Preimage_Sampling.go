@@ -35,23 +35,34 @@ func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
 
 // ZtoZhat converts an integer matrix Z ∈ ℤ^{κ×N} into polys in R_q^κ (full CRT).
 func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
-	κ, N := len(Z), ringQ.N
-	out := make([]*ring.Poly, κ)
-	for i := 0; i < κ; i++ {
+	k := len(Z)
+	if k == 0 {
+		log.Fatalf("ZtoZhat: empty gadget vector")
+	}
+
+	N := ringQ.N
+	for row := range Z {
+		if len(Z[row]) != N {
+			log.Fatalf("ZtoZhat: row %d has length %d (want %d)", row, len(Z[row]), N)
+		}
+	}
+
+	out := make([]*ring.Poly, k)
+	halfQ := ringQ.Modulus[0] / 2
+	for row := 0; row < k; row++ {
 		P := ringQ.NewPoly()
 		for lvl, qi := range ringQ.Modulus {
-			mod := int64(qi)
+			mod := qi
 			for t := 0; t < N; t++ {
-				c := SignedToUnsigned(Z[i][t], uint64(mod))
-				P.Coeffs[lvl][t] = c
+				val := Z[row][t]
+				if val >= int64(halfQ) || val < -int64(halfQ) {
+					log.Printf("ZtoZhat warning: coeff row=%d idx=%d value=%d outside (-q/2,q/2)", row, t, val)
+				}
+				P.Coeffs[lvl][t] = SignedToUnsigned(val, mod)
 			}
 		}
 		ringQ.NTT(P, P)
-		// fmt.Print("P = ")
-		// for t := 0; t < N; t++ {
-		// 	fmt.Print(P.Coeffs[0][t], " ")
-		// }
-		out[i] = P
+		out[row] = P
 	}
 	return out
 }

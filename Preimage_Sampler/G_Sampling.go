@@ -24,7 +24,7 @@ type Trapdoor struct {
 // CreateGadgetMatrix returns the gadget matrix G of size (rows × k).
 // In particular, for rows=1 it returns the row-vector
 //
-//	[ g_1, g_2, …, g_k ]  where  g_j = base^(j-1) mod q
+//	[ g_1, g_2, …, g_k ]  where  g_j = base^(j) mod q
 //
 // as constant polynomials in Rq.
 // We allocate rows*k polys, in row-major order; unused for rows>1 in this trapdoor scheme.
@@ -38,7 +38,7 @@ func CreateGadgetMatrix(ringQ *ring.Ring, base uint64, rows, k int) []*ring.Poly
 	// total number of polys = rows×k
 	G := make([]*ring.Poly, rows*k)
 
-	// For each row i and gadget index j, set G[i*k + j] = constant poly t^(j)
+	// For each row i and gadget index j, set G[i*k + j] = constant poly t^(j-1)
 	for i := 0; i < rows; i++ {
 		for j := 0; j < k; j++ {
 			idx := i*k + j
@@ -231,7 +231,6 @@ func SampleGDiscrete(
 	base uint64,
 	uCoeff []uint64,
 	k int,
-	dgg *DiscreteGaussian,
 ) [][]int64 {
 
 	N := ringQ.N
