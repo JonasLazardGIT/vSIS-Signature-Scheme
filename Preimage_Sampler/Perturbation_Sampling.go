@@ -258,12 +258,15 @@ func SamplePz(
 		ePoly := ringQ.NewPoly()
 		ringQ.InvNTT(Ttilde[1][j], ePoly)
 
+		// apply negacyclic transpose via AutomorphismTranspose
+		rTPoly := AutomorphismTranspose(ringQ, rPoly)
+		eTPoly := AutomorphismTranspose(ringQ, ePoly)
+
 		// evaluate as complex vectors (Eval domain)
 		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
 		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
-
-		rT := HermitianTransposeFieldElem(rF)
-		eT := HermitianTransposeFieldElem(eF)
+		rT := NegacyclicEvaluatePoly(rTPoly, ringQ, prec)
+		eT := NegacyclicEvaluatePoly(eTPoly, ringQ, prec)
 
 		for i := 0; i < n; i++ {
 			va.Coeffs[i] = va.Coeffs[i].Add(rT.Coeffs[i].Mul(rF.Coeffs[i]))
@@ -353,7 +356,7 @@ func SamplePz(
 
 		// ───────────────────────────────────────────────────────
 		// Debug block: verify “ints → CRT → NTT → InvNTT” is loss-free
-		if true {
+		if samplerDebug {
 			coeff := ringQ.NewPoly()
 			ringQ.InvNTT(P, coeff) // back to coeff domain
 

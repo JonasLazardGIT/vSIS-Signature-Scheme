@@ -84,10 +84,15 @@ func computeABDUsingCode(ringQ *ring.Ring, s, alpha float64, T [2][]*ring.Poly, 
 		ringQ.InvNTT(T[0][j], rPoly)
 		ePoly := ringQ.NewPoly()
 		ringQ.InvNTT(T[1][j], ePoly)
+
+		rTPoly := AutomorphismTranspose(ringQ, rPoly)
+		eTPoly := AutomorphismTranspose(ringQ, ePoly)
+
 		rF := NegacyclicEvaluatePoly(rPoly, ringQ, prec)
 		eF := NegacyclicEvaluatePoly(ePoly, ringQ, prec)
-		rT := HermitianTransposeFieldElem(rF)
-		eT := HermitianTransposeFieldElem(eF)
+		rT := NegacyclicEvaluatePoly(rTPoly, ringQ, prec)
+		eT := NegacyclicEvaluatePoly(eTPoly, ringQ, prec)
+
 		va = FieldAddBig(va, FieldMulBig(rT, rF))
 		vb = FieldAddBig(vb, FieldMulBig(eF, rT))
 		vd = FieldAddBig(vd, FieldMulBig(eT, eF))
