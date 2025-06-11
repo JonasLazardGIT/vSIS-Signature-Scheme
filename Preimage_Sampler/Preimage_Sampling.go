@@ -119,14 +119,42 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
+<<<<<<< ours
+=======
+	if true {
+		coeff := ringQ.NewPoly()
+		ringQ.InvNTT(zHat[0], coeff)
+		fmt.Printf("[DEBUG] zHat[0](0) = %d (expected %d)\n", UnsignedToSigned(coeff.Coeffs[0][0], ringQ.Modulus[0]), Zmat[0][0])
+	}
+
+>>>>>>> theirs
+	// Precompute the negacyclic transposes of the trapdoor polynomials
+	rHatT := make([]*ring.Poly, k)
+	eHatT := make([]*ring.Poly, k)
+	for j := 0; j < k; j++ {
+		rTmp := ringQ.NewPoly()
+		ringQ.InvNTT(rHat[j], rTmp)
+		rTmp = AutomorphismTranspose(ringQ, rTmp)
+		ringQ.NTT(rTmp, rTmp)
+		rHatT[j] = rTmp
+
+		eTmp := ringQ.NewPoly()
+		ringQ.InvNTT(eHat[j], eTmp)
+		eTmp = AutomorphismTranspose(ringQ, eTmp)
+		ringQ.NTT(eTmp, eTmp)
+		eHatT[j] = eTmp
+	}
+
+	fmt.Println("GaussSamp: using transposed trapdoor for inner products")
+
 	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
-	// row 0: p[0] + <eHat, zHat>
+	// row 0: p[0] + <eHatᵀ, zHat>
 	sum0 := ringQ.NewPoly()
 	tmpez := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmpez)
+		ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmpez)
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
@@ -134,10 +162,10 @@ func GaussSamp(
 	// when forming the first two rows of x.
 	ringQ.Add(p[0], sum0, x[0])
 
-	// row 1: p[1] + <rHat, zHat>
+	// row 1: p[1] + <rHatᵀ, zHat>
 	sum1 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmpez)
+		ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmpez)
 		ringQ.Add(sum1, tmpez, sum1)
 	}
 	x[1] = ringQ.NewPoly()
@@ -192,9 +220,9 @@ func GaussSamp(
 		eDotZEvalAcc := ringQ.NewPoly()
 		rDotZEvalAcc := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmp)
 			ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
-			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmp)
 			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
 		}
 		ringQ.MulCoeffsMontgomery(A[0], eDotZEvalAcc, tmp)
@@ -207,6 +235,38 @@ func GaussSamp(
 
 		fmt.Printf("[CHECK] A·p coeff[0]=%d  A·z coeff[0]=%d\n", UnsignedToSigned(ApCoeff.Coeffs[0][0], ringQ.Modulus[0]), UnsignedToSigned(AzCoeff.Coeffs[0][0], ringQ.Modulus[0]))
 
+		// 1c) verify that A·p + G·z equals the target u
+		Gz := CreateGadgetMatrix(ringQ, base, 1, k)
+		GzEval := ringQ.NewPoly()
+		for j := 0; j < k; j++ {
+			ringQ.NTT(Gz[j], Gz[j])
+			ringQ.MulCoeffsMontgomery(Gz[j], zHat[j], tmp)
+			ringQ.Add(GzEval, tmp, GzEval)
+		}
+		GzCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(GzEval, GzCoeff)
+
+		uCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(u, uCoeff)
+
+		sumCheck := ringQ.NewPoly()
+		ringQ.Add(ApCoeff, GzCoeff, sumCheck)
+		ringQ.Sub(sumCheck, uCoeff, sumCheck)
+
+		diff0 := centre(sumCheck.Coeffs[0][0])
+		if diff0 != 0 {
+			log.Printf("[CHECK] A·p coeff[0]=%d", centre(ApCoeff.Coeffs[0][0]))
+			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff.Coeffs[0][0]))
+			log.Printf("[CHECK] u coeff[0]=%d", centre(uCoeff.Coeffs[0][0]))
+			log.Fatalf("[CHECK] A·p+G·z mismatch at slot 0: %d", diff0)
+		}
+		for t := 1; t < ringQ.N; t++ {
+			if centre(sumCheck.Coeffs[0][t]) != 0 {
+				log.Fatalf("[CHECK] A·p+G·z mismatch at slot %d: %d", t, centre(sumCheck.Coeffs[0][t]))
+			}
+		}
+		fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
+
 		// 3) Inverse‐NTT p₀ and extract constant
 		p0CoeffPoly := ringQ.NewPoly()
 		ringQ.InvNTT(p[0], p0CoeffPoly)
@@ -218,7 +278,7 @@ func GaussSamp(
 		// 5) Compute e·z in NTT, then back to coeffs
 		eDotZEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmp)
 			ringQ.Add(eDotZEval, tmp, eDotZEval)
 		}
 		eDotZCoeff := ringQ.NewPoly()
@@ -246,7 +306,7 @@ func GaussSamp(
 		ringQ.InvNTT(x[1], x1CoeffPoly)
 		rDotZEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmp)
 			ringQ.Add(rDotZEval, tmp, rDotZEval)
 		}
 		rDotZCoeff := ringQ.NewPoly()

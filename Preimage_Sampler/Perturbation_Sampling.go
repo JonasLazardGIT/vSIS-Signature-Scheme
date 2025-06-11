@@ -230,6 +230,25 @@ func SamplePz(
 	n := ringQ.N
 	k := len(Ttilde[0])
 
+	// Precompute the negacyclic transposes of the trapdoor rows
+	rHatT := make([]*ring.Poly, k)
+	eHatT := make([]*ring.Poly, k)
+	for j := 0; j < k; j++ {
+		rTmp := ringQ.NewPoly()
+		ringQ.InvNTT(Ttilde[0][j], rTmp)
+		rTmp = AutomorphismTranspose(ringQ, rTmp)
+		ringQ.NTT(rTmp, rTmp)
+		rHatT[j] = rTmp
+
+		eTmp := ringQ.NewPoly()
+		ringQ.InvNTT(Ttilde[1][j], eTmp)
+		eTmp = AutomorphismTranspose(ringQ, eTmp)
+		ringQ.NTT(eTmp, eTmp)
+		eHatT[j] = eTmp
+	}
+
+	fmt.Println("SamplePz: using transposed trapdoor for inner products")
+
 	// 1) Compute z = (1/α² − 1/s²)^(−1) with full `prec`
 	one := new(big.Float).SetPrec(prec).SetFloat64(1.0)
 	s2 := new(big.Float).SetPrec(prec).SetFloat64(s * s)
@@ -403,12 +422,13 @@ func SamplePz(
 	eDotQEval := ringQ.NewPoly()
 	tmp := ringQ.NewPoly()
 
-	// (a) accumulate inner‐products in evaluation domain
+	// (a) accumulate inner‐products in evaluation domain using the
+	//      transposed trapdoor polynomials
 	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(Ttilde[0][j], qhat[j], tmp)
+		ringQ.MulCoeffsMontgomery(rHatT[j], qhat[j], tmp)
 		ringQ.Add(rDotQEval, tmp, rDotQEval)
 
-		ringQ.MulCoeffsMontgomery(Ttilde[1][j], qhat[j], tmp)
+		ringQ.MulCoeffsMontgomery(eHatT[j], qhat[j], tmp)
 		ringQ.Add(eDotQEval, tmp, eDotQEval)
 	}
 
@@ -511,11 +531,10 @@ func SamplePz(
 		rDotQEval := ringQ.NewPoly() // zero
 		tmp := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			// eHat = Ttilde[1][j] ,  rHat = Ttilde[0][j]   (both NTT)
-			ringQ.MulCoeffsMontgomery(Ttilde[1][j], qhat[j], tmp)
+			ringQ.MulCoeffsMontgomery(eHatT[j], qhat[j], tmp)
 			ringQ.Add(eDotQEval, tmp, eDotQEval)
 
-			ringQ.MulCoeffsMontgomery(Ttilde[0][j], qhat[j], tmp)
+			ringQ.MulCoeffsMontgomery(rHatT[j], qhat[j], tmp)
 			ringQ.Add(rDotQEval, tmp, rDotQEval)
 		}
 		eDotQCoeff := ringQ.NewPoly()
