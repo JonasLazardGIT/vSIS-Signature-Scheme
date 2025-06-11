@@ -119,15 +119,12 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
-<<<<<<< ours
-=======
 	if true {
 		coeff := ringQ.NewPoly()
 		ringQ.InvNTT(zHat[0], coeff)
 		fmt.Printf("[DEBUG] zHat[0](0) = %d (expected %d)\n", UnsignedToSigned(coeff.Coeffs[0][0], ringQ.Modulus[0]), Zmat[0][0])
 	}
 
->>>>>>> theirs
 	// Precompute the negacyclic transposes of the trapdoor polynomials
 	rHatT := make([]*ring.Poly, k)
 	eHatT := make([]*ring.Poly, k)

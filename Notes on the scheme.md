@@ -301,3 +301,143 @@ if AxCoeff.Coeffs[0][t] != uCoeffOrig.Coeffs[0][t] { log.Fatalf(...) }
 | 9    | `x₀ = p₀ + ⟨ê̂,ẑ⟩`, `x₁ = p₁ + ⟨r̂,ẑ⟩`, `x_{j+2} = p_{j+2}+ẑ_j`                    |
 | 10   | final equality `A·x ≡ u (mod q)` checked coefficient-wise                             |
 
+Below every symbol that appears in the derivation is pinned down by an explicit **equation** or **constraint** showing how it is coupled to the target *u*, the public matrix *A*, the gadget *G*, or the trapdoor $(\hat r,\hat e)$.
+
+---
+
+### 1 Global setting
+
+*Ring*. $R_q = \mathbb{Z}_q[X]/(X^N+1)$ with modulus $q$ and dimension $N$.
+*Gadget*. Pick a radix $t\;(=2\text{ or }3\text{ most often})$ and set
+
+$$
+G \;=\;[\,g_0,\dots,g_{k-1}\,],\quad
+g_j \;=\;t^{\,j}\;\in R_q,
+\qquad k=\lceil\log_t q\rceil .
+$$
+
+---
+
+### 2 Trapdoor and public key
+
+The trapdoor is the ordered pair
+
+$$
+T \;=\;(\hat r,\hat e), \qquad
+\hat r,\hat e \in R_q^{k}.
+$$
+
+Choose a fresh $$a\overset{\$}{\leftarrow} R_q$$ and publish the **1 × (k+2)** vector
+
+$$
+A \;=\;[1,\;a,\;A_2[0],\dots,A_2[k\!-\!1]],
+$$
+
+$$
+\boxed{A_2[j] = g_j - (a\hat r_j+\hat e_j)}\qquad(j=0,\dots,k-1).
+$$
+
+Because $A_2$ is built from $G$ and $T$, anyone who knows $T$ can later cancel those two hidden terms.
+
+---
+
+### 3 Target instance
+
+The signer/verifier supplies the target polynomial
+
+$$
+u \in R_q.
+$$
+
+---
+
+### 4 Joint perturbation–gadget solution
+
+The sampler first draws a discrete-Gaussian vector
+
+$$
+\hat z = (\hat z_0,\dots,\hat z_{k-1})\in R_q^{k},
+$$
+
+then finds a small-norm **perturbation**
+
+$$
+p=(p_0,p_1,p_2,\dots,p_{k+1})\in R_q^{k+2}
+$$
+
+by solving the linear congruence
+
+$$
+\boxed{A\cdot p \;=\; u - G\cdot\hat z \pmod{q}}\qquad(\star)
+$$
+
+with the additional requirement that the coefficients of $p$ lie in a narrow Gaussian; the concrete SearchPz routine fulfils both goals simultaneously.
+
+Equation $(\star)$ ties $p$ directly to the public key $A$, the anonymous target $u$ and the (still private) gadget solution $\hat z$.
+
+---
+
+### 5 Final preimage vector
+
+Using the trapdoor, assemble
+
+$$
+\begin{aligned}
+x_0 &= p_0 + \sum_{j=0}^{k-1} \hat e_j\hat z_j,\\[2mm]
+x_1 &= p_1 + \sum_{j=0}^{k-1} \hat r_j\hat z_j,\\[2mm]
+x_{j+2} &= p_{j+2} + \hat z_j \quad(j=0,\dots,k-1).
+\end{aligned}
+$$
+
+Compactly,
+
+$$
+x \;=\;\bigl[x_0,\,x_1,\,x_2,\dots,x_{k+1}\bigr]^{\!\top}\in R_q^{k+2}.
+$$
+
+Every coordinate is now a **deterministic function** of
+$(u,\,A,\,G,\,\hat r,\,\hat e,\,\hat z,\,p)$.
+
+---
+
+### 6 Verification identity
+
+Plugging the definitions of $A$ and $x$ gives
+
+$$
+A\cdot x
+   \;=\;
+     \underbrace{A\cdot p}_{u-G\hat z}
+     \;+\;
+     \underbrace{\bigl(G\hat z - a\!\sum_j\hat r_j\hat z_j -\sum_j\hat e_j\hat z_j\bigr)}_{\text{added in }A_2\text{ block}}
+     \;+\;
+     \underbrace{\bigl(a\!\sum_j\hat r_j\hat z_j +\sum_j\hat e_j\hat z_j\bigr)}_{\text{added in }x_0,x_1}.
+$$
+
+The two highlighted blocks cancel term-wise, leaving
+
+$$
+\boxed{A\cdot x \;=\; u \pmod{q}}.
+$$
+
+---
+
+### 7 Parameter map (quick lookup)
+
+| Symbol      | Equation / Constraint                             | Depends on       |
+| ----------- | ------------------------------------------------- | ---------------- |
+| $k$         | $\lceil\log_t q\rceil$                            | $q,t$            |
+| $g_j$       | $t^{\,j}$                                         | $t$              |
+| $G$         | $[g_0,\dots,g_{k-1}]$                             | $t,q$            |
+| $A_0$       | $1$                                               | —                |
+| $A_1$       | $$a\overset{\$}{\leftarrow}R_q$$                  | randomness       |
+| $A_2[j]$    | $g_j-(a\hat r_j+\hat e_j)$                        | $G,\,a,\,T$      |
+| $p$         | unique small-norm solution of $A p = u - G\hat z$ | $u,A,G,\hat z$   |
+| $\hat z$    | discrete-Gaussian solving $G\hat z \equiv u-Ap$   | $u,A,G,p$        |
+| $x_0$       | $p_0+\sum \hat e_j\hat z_j$                       | $p,\,T,\hat z$   |
+| $x_1$       | $p_1+\sum \hat r_j\hat z_j$                       | $p,\,T,\hat z$   |
+| $x_{j+2}$   | $p_{j+2}+\hat z_j$                                | $p,\hat z$       |
+| $x$         | concatenation of the above                        | all of the above |
+| Final check | $A x \equiv u$                                    | public data only |
+
+Every parameter is therefore expressed either **directly** in terms of $(u,A)$ or **indirectly** through the trapdoor pair and the gadget relation, satisfying the requested linkage.

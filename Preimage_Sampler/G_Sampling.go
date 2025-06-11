@@ -312,7 +312,7 @@ func SampleGDiscrete(
 			int64(z[k-2]) +
 			int64(vDigits[k-1])
 
-			//! ---------- DEBUG A : verify Σ t_i·t^i = sub[j] ----------
+		//! ---------- DEBUG A : verify Σ t_i·t^i = sub[j] ----------
 		if j < 8 { // limit noise; increase if needed
 			q := int64(ringQ.Modulus[0]) // import ringQ via closure or param
 			recomb := int64(0)
