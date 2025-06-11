@@ -125,7 +125,9 @@ func GaussSamp(
 		fmt.Printf("[DEBUG] zHat[0](0) = %d (expected %d)\n", UnsignedToSigned(coeff.Coeffs[0][0], ringQ.Modulus[0]), Zmat[0][0])
 	}
 
-	// Precompute the negacyclic transposes of the trapdoor polynomials
+	// Precompute the negacyclic transposes of the trapdoor polynomials for
+	// assembling x. SamplePz uses the originals and applies the transpose
+	// internally when computing its dot-products.
 	rHatT := make([]*ring.Poly, k)
 	eHatT := make([]*ring.Poly, k)
 	for j := 0; j < k; j++ {
