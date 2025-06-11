@@ -230,24 +230,7 @@ func SamplePz(
 	n := ringQ.N
 	k := len(Ttilde[0])
 
-	// Precompute the negacyclic transposes of the trapdoor rows
-	rHatT := make([]*ring.Poly, k)
-	eHatT := make([]*ring.Poly, k)
-	for j := 0; j < k; j++ {
-		rTmp := ringQ.NewPoly()
-		ringQ.InvNTT(Ttilde[0][j], rTmp)
-		rTmp = AutomorphismTranspose(ringQ, rTmp)
-		ringQ.NTT(rTmp, rTmp)
-		rHatT[j] = rTmp
-
-		eTmp := ringQ.NewPoly()
-		ringQ.InvNTT(Ttilde[1][j], eTmp)
-		eTmp = AutomorphismTranspose(ringQ, eTmp)
-		ringQ.NTT(eTmp, eTmp)
-		eHatT[j] = eTmp
-	}
-
-	fmt.Println("SamplePz: using transposed trapdoor for inner products")
+	fmt.Println("SamplePz: computing dot products via transpose")
 
 	// 1) Compute z = (1/α² − 1/s²)^(−1) with full `prec`
 	one := new(big.Float).SetPrec(prec).SetFloat64(1.0)
@@ -418,19 +401,10 @@ func SamplePz(
 	// ---------------------------
 	c0Poly := ringQ.NewPoly() // coefficient‐domain accumulator
 	c1Poly := ringQ.NewPoly()
-	rDotQEval := ringQ.NewPoly()
-	eDotQEval := ringQ.NewPoly()
-	tmp := ringQ.NewPoly()
 
-	// (a) accumulate inner‐products in evaluation domain using the
-	//      transposed trapdoor polynomials
-	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(rHatT[j], qhat[j], tmp)
-		ringQ.Add(rDotQEval, tmp, rDotQEval)
-
-		ringQ.MulCoeffsMontgomery(eHatT[j], qhat[j], tmp)
-		ringQ.Add(eDotQEval, tmp, eDotQEval)
-	}
+	// (a) accumulate inner‐products in evaluation domain
+	rDotQEval := DotProduct(ringQ, Ttilde[0], qhat)
+	eDotQEval := DotProduct(ringQ, Ttilde[1], qhat)
 
 	// convert to coefficient domain
 	ringQ.InvNTT(rDotQEval, c0Poly)
@@ -527,16 +501,8 @@ func SamplePz(
 		}
 
 		// ❶  compute ê̂ᵀ·Q   and   r̂ᵀ·Q   in NTT then go back to COEFF
-		eDotQEval := ringQ.NewPoly() // zero
-		rDotQEval := ringQ.NewPoly() // zero
-		tmp := ringQ.NewPoly()
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHatT[j], qhat[j], tmp)
-			ringQ.Add(eDotQEval, tmp, eDotQEval)
-
-			ringQ.MulCoeffsMontgomery(rHatT[j], qhat[j], tmp)
-			ringQ.Add(rDotQEval, tmp, rDotQEval)
-		}
+		eDotQEval := DotProduct(ringQ, Ttilde[1], qhat)
+		rDotQEval := DotProduct(ringQ, Ttilde[0], qhat)
 		eDotQCoeff := ringQ.NewPoly()
 		rDotQCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(eDotQEval, eDotQCoeff)

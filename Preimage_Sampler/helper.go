@@ -194,3 +194,23 @@ func SignedToUnsigned(s int64, q uint64) uint64 {
 	}
 	return uint64(r)
 }
+
+// DotProduct computes the negacyclic dot product \sum_i transpose(a_i) * b_i.
+// Both inputs must be in the NTT (evaluation) domain. The result is returned
+// in the NTT domain.
+func DotProduct(r *ring.Ring, a, b []*ring.Poly) *ring.Poly {
+	if len(a) != len(b) {
+		panic("DotProduct: length mismatch")
+	}
+	acc := r.NewPoly()
+	tmp := r.NewPoly()
+	for i := range a {
+		coeff := r.NewPoly()
+		r.InvNTT(a[i], coeff)
+		coeff = AutomorphismTranspose(r, coeff)
+		r.NTT(coeff, coeff)
+		r.MulCoeffsMontgomery(coeff, b[i], tmp)
+		r.Add(acc, tmp, acc)
+	}
+	return acc
+}
