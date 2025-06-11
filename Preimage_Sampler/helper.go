@@ -27,19 +27,21 @@ func baseDigits(v int64, base int64, k int) []int64 {
 
 func AutomorphismTranspose(r *ring.Ring, p *ring.Poly) *ring.Poly {
 	N := r.N
-	q := r.Modulus[0]
-
 	result := r.NewPoly()
-	for i := 0; i < N; i++ {
-		revIdx := (N - i) % N
-		coeff := p.Coeffs[0][revIdx]
-		// Negate if index is odd
-		if i%2 == 1 && coeff != 0 {
-			result.Coeffs[0][i] = (q - coeff) % q
-		} else {
-			result.Coeffs[0][i] = coeff
+
+	for lvl, q := range r.Modulus {
+		// copy index 0 exactly
+		result.Coeffs[lvl][0] = p.Coeffs[lvl][0] % q
+		for i := 1; i < N; i++ {
+			coeff := p.Coeffs[lvl][N-i] % q
+			if coeff != 0 {
+				result.Coeffs[lvl][i] = (q - coeff) % q
+			} else {
+				result.Coeffs[lvl][i] = 0
+			}
 		}
 	}
+
 	return result
 }
 
