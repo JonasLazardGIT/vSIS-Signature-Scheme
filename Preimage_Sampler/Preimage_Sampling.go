@@ -227,20 +227,9 @@ func GaussSamp(
 			ringQ.MulCoeffsMontgomery(Gz[j], zHat[j], tmp)
 			ringQ.Add(GzEval, tmp, GzEval)
 		}
-		GzCoeff_FromMat := ringQ.NewPoly()
-		for j := 0; j < ringQ.N; j++ {
-			recomb := int64(0)
-			for idx := k - 1; idx >= 0; idx-- {
-				recomb = (recomb*int64(base) + Zmat[idx][j]) % int64(ringQ.Modulus[0])
-			}
-			GzCoeff_FromMat.Coeffs[0][j] = SignedToUnsigned(recomb, ringQ.Modulus[0])
-		}
 
 		GzCoeff_FromVector := ringQ.NewPoly()
 		ringQ.InvNTT(GzEval, GzCoeff_FromVector)
-		for t := 0; t < 10; t++ {
-			fmt.Printf(("G.Z fromMat coeff[%d]=%d  G.Z FromVector coeff[%d]=%d\n"), t, (GzCoeff_FromMat.Coeffs[0][t]), t, (GzCoeff_FromVector.Coeffs[0][t]))
-		}
 
 		uCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(u, uCoeff)
