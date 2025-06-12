@@ -133,35 +133,16 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
-	// Precompute the negacyclic transposes of the trapdoor polynomials for
-	// assembling x. SamplePz uses the originals and applies the transpose
-	// internally when computing its dot-products.
-	rHatT := make([]*ring.Poly, k)
-	eHatT := make([]*ring.Poly, k)
-	for j := 0; j < k; j++ {
-		rTmp := ringQ.NewPoly()
-		ringQ.InvNTT(rHat[j], rTmp)
-		rTmp = AutomorphismTranspose(ringQ, rTmp)
-		ringQ.NTT(rTmp, rTmp)
-		rHatT[j] = rTmp
-
-		eTmp := ringQ.NewPoly()
-		ringQ.InvNTT(eHat[j], eTmp)
-		eTmp = AutomorphismTranspose(ringQ, eTmp)
-		ringQ.NTT(eTmp, eTmp)
-		eHatT[j] = eTmp
-	}
-
 	fmt.Println("GaussSamp: using transposed trapdoor for inner products")
 
 	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
-	// row 0: p[0] + <eHatᵀ, zHat>
+	// row 0: p[0] + eHat . zHat with eHat . zHat = sum(MulCoeffsMontgomeryAndAdd(eHat[j], zHat[j]))
 	sum0 := ringQ.NewPoly()
-	tmpez := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmpez)
+		tmpez := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmpez)
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
@@ -169,14 +150,14 @@ func GaussSamp(
 	// when forming the first two rows of x.
 	ringQ.Add(p[0], sum0, x[0])
 
-	// row 1: p[1] + <rHatᵀ, zHat>
+	// row 1: p[1] + zHat with rHat . zHat = sum(MulCoeffsMontgomeryAndAdd(rHat[j], zHat[j]))
 	sum1 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
-		ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmpez)
-		ringQ.Add(sum1, tmpez, sum1)
+		tmprz := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmprz)
+		ringQ.Add(sum1, tmprz, sum1)
 	}
 	x[1] = ringQ.NewPoly()
-	// PALISADE also adds here
 	ringQ.Add(p[1], sum1, x[1])
 
 	// rows 2…k+1: just p[i] + zHat[i-2]
@@ -185,7 +166,7 @@ func GaussSamp(
 		ringQ.Add(p[i], zHat[i-2], x[i])
 	}
 
-	//! ---------- DEBUG B : verify x₀ formula and A·x = u ----------
+	//! ---------- DEBUG B : verify Ap + Gz = u ----------
 	if true {
 		// helper to centre a coeff into (−q/2, q/2]
 		centre := func(v uint64) int64 {
@@ -227,9 +208,9 @@ func GaussSamp(
 		eDotZEvalAcc := ringQ.NewPoly()
 		rDotZEvalAcc := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
 			ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
-			ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmp)
+			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
 			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
 		}
 		ringQ.MulCoeffsMontgomery(A[0], eDotZEvalAcc, tmp)
@@ -286,112 +267,6 @@ func GaussSamp(
 		}
 		fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
 
-		// 3) Inverse‐NTT p₀ and extract constant
-		p0CoeffPoly := ringQ.NewPoly()
-		ringQ.InvNTT(p[0], p0CoeffPoly)
-
-		// 4) Inverse‐NTT x₀
-		xCoeffPoly := ringQ.NewPoly()
-		ringQ.InvNTT(x[0], xCoeffPoly)
-
-		// 5) Compute e·z in NTT, then back to coeffs
-		eDotZEval := ringQ.NewPoly()
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHatT[j], zHat[j], tmp)
-			ringQ.Add(eDotZEval, tmp, eDotZEval)
-		}
-		eDotZCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(eDotZEval, eDotZCoeff)
-		// coefficient-wise cancel check for x0
-		for t := 0; t < ringQ.N; t++ {
-			p0t := centre(p0CoeffPoly.Coeffs[0][t])
-			ez := centre(eDotZCoeff.Coeffs[0][t])
-			xt := centre(xCoeffPoly.Coeffs[0][t])
-			if xt < 0 {
-				xt += int64(ringQ.Modulus[0])
-			}
-			p0tplusEz := p0t + ez
-			if p0tplusEz < 0 && xt >= 0 {
-				p0tplusEz += int64(ringQ.Modulus[0])
-			}
-			if p0tplusEz != xt {
-				log.Fatalf("Cancel-check x0 mismatch slot %d: p0=%d e·z=%d sum=%d x0=%d", t, p0t, ez, p0tplusEz, xt)
-			}
-		}
-
-		p1CoeffPoly := ringQ.NewPoly()
-		ringQ.InvNTT(p[1], p1CoeffPoly)
-		x1CoeffPoly := ringQ.NewPoly()
-		ringQ.InvNTT(x[1], x1CoeffPoly)
-		rDotZEval := ringQ.NewPoly()
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(rHatT[j], zHat[j], tmp)
-			ringQ.Add(rDotZEval, tmp, rDotZEval)
-		}
-		rDotZCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(rDotZEval, rDotZCoeff)
-		for t := 0; t < ringQ.N; t++ {
-			p1t := centre(p1CoeffPoly.Coeffs[0][t])
-			rz := centre(rDotZCoeff.Coeffs[0][t])
-			xt := centre(x1CoeffPoly.Coeffs[0][t])
-			p1tplusrz := p1t + rz
-			if p1tplusrz < 0 && xt >= 0 {
-				p1tplusrz += int64(ringQ.Modulus[0])
-			}
-			if p1tplusrz > 0 && xt < 0 {
-				p1tplusrz -= int64(ringQ.Modulus[0])
-			}
-			if p1tplusrz != xt {
-				log.Fatalf("Cancel-check x1 mismatch slot %d: p1=%d r·z=%d sum=%d x1=%d", t, p1t, rz, p1tplusrz, xt)
-			}
-		}
-
-		//! ---------- DEBUG C : verify gadget rows ----------
-		G := CreateGadgetMatrix(ringQ, base, 1, k)
-		for j := 0; j < k; j++ {
-			ringQ.NTT(G[j], G[j])
-		}
-
-		for j := 0; j < k; j++ {
-			evalGad := ringQ.NewPoly()
-			evalGp := ringQ.NewPoly()
-			evalGz := ringQ.NewPoly()
-
-			ringQ.MulCoeffsMontgomery(A[j+2], x[j+2], evalGad)
-			ringQ.MulCoeffsMontgomery(G[j], p[j+2], evalGp)
-			ringQ.MulCoeffsMontgomery(G[j], zHat[j], evalGz)
-
-			// (a*rHat_j + eHat_j) * x_{j+2}
-			trapTerm := ringQ.NewPoly()
-			ringQ.MulCoeffsMontgomery(A[1], rHat[j], trapTerm)
-			ringQ.Add(trapTerm, eHat[j], trapTerm)
-			ringQ.MulCoeffsMontgomery(trapTerm, x[j+2], trapTerm)
-
-			coeffGad := ringQ.NewPoly()
-			coeffGp := ringQ.NewPoly()
-			coeffGz := ringQ.NewPoly()
-			coeffTrap := ringQ.NewPoly()
-
-			ringQ.InvNTT(evalGad, coeffGad)
-			ringQ.InvNTT(evalGp, coeffGp)
-			ringQ.InvNTT(evalGz, coeffGz)
-			ringQ.InvNTT(trapTerm, coeffTrap)
-
-			rhs := ringQ.NewPoly()
-			ringQ.Add(coeffGp, coeffGz, rhs)
-			ringQ.Sub(rhs, coeffTrap, rhs)
-
-			diff := ringQ.NewPoly()
-			ringQ.Sub(coeffGad, rhs, diff)
-
-			for t := 0; t < ringQ.N; t++ {
-				if centre(diff.Coeffs[0][t]) != 0 {
-					log.Fatalf("Gad-row %d, slot %d: diff = %d ≠ 0", j, t, centre(diff.Coeffs[0][t]))
-				}
-			}
-			fmt.Printf("Gad-row %d: all %d coefficients matched\n", j, ringQ.N)
-		}
-		//! ------- END DEBUG C -------
 	}
 	//! ---------- END DEBUG B ----------
 	return x
