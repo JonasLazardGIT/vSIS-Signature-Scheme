@@ -186,8 +186,6 @@ func GaussSamp(
 			ringQ.MulCoeffsMontgomery(A[i], x[i], tmp)
 			ringQ.Add(AxEval, tmp, AxEval)
 		}
-		AxCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(AxEval, AxCoeff)
 
 		// 1b) also compute A·p and A·z separately for diagnostics
 		ApEval := ringQ.NewPoly()
@@ -220,8 +218,6 @@ func GaussSamp(
 
 		AzCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(AzEval, AzCoeff)
-
-		fmt.Printf("[CHECK] A·p coeff[0]=%d  A·z coeff[0]=%d\n", UnsignedToSigned(ApCoeff.Coeffs[0][0], ringQ.Modulus[0]), UnsignedToSigned(AzCoeff.Coeffs[0][0], ringQ.Modulus[0]))
 
 		// 1c) verify that A·p + G·z equals the target u
 		Gz := CreateGadgetMatrix(ringQ, base, 1, k)
@@ -266,7 +262,37 @@ func GaussSamp(
 			}
 		}
 		fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
+		// 1d) verify that the assembled x indeed satisfies A·x = u
+		AxEvalCheck := ringQ.NewPoly()
+		ring.Copy(ApEval, AxEvalCheck)
 
+		blockA2 := ringQ.NewPoly()
+		ring.Copy(GzEval, blockA2)
+		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, tmp)
+		ringQ.Sub(blockA2, tmp, blockA2)
+		ringQ.Sub(blockA2, eDotZEvalAcc, blockA2)
+
+		blockX01 := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, blockX01)
+		ringQ.Add(blockX01, eDotZEvalAcc, blockX01)
+
+		ringQ.Add(AxEvalCheck, blockA2, AxEvalCheck)
+		ringQ.Add(AxEvalCheck, blockX01, AxEvalCheck)
+
+		AxCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(AxEvalCheck, AxCoeff)
+
+		diffAx := ringQ.NewPoly()
+		ringQ.Sub(AxCoeff, uCoeff, diffAx)
+		if centre(diffAx.Coeffs[0][0]) != 0 {
+			log.Fatalf("[CHECK] A·x mismatch at slot 0: %d", centre(diffAx.Coeffs[0][0]))
+		}
+		for t := 1; t < ringQ.N; t++ {
+			if centre(diffAx.Coeffs[0][t]) != 0 {
+				log.Fatalf("[CHECK] A·x mismatch at slot %d: %d", t, centre(diffAx.Coeffs[0][t]))
+			}
+		}
+		fmt.Println("[CHECK] A·x ≡ u  ✔")
 	}
 	//! ---------- END DEBUG B ----------
 	return x
