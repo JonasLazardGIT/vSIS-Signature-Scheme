@@ -67,6 +67,29 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 	return out
 }
 
+// ZhatToZ converts a slice of NTT-domain polys back into an integer matrix
+// Z ∈ ℤ^{κ×N}. It assumes each input polynomial encodes the same coefficient
+// across all CRT levels.
+func ZhatToZ(zHat []*ring.Poly, ringQ *ring.Ring) [][]int64 {
+	k := len(zHat)
+	if k == 0 {
+		log.Fatalf("ZhatToZ: empty input slice")
+	}
+
+	N := ringQ.N
+	out := make([][]int64, k)
+	for row := 0; row < k; row++ {
+		coeff := ringQ.NewPoly()
+		ringQ.InvNTT(zHat[row], coeff)
+		rowVals := make([]int64, N)
+		for t := 0; t < N; t++ {
+			rowVals[t] = UnsignedToSigned(coeff.Coeffs[0][t], ringQ.Modulus[0])
+		}
+		out[row] = rowVals
+	}
+	return out
+}
+
 // GaussSamp implements Alg 2 (discrete branch) from the paper.
 //
 //	ringQ:    the R_q ring
