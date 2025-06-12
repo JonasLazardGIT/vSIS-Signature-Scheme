@@ -133,12 +133,6 @@ func GaussSamp(
 	// 4) CRT+NTT each row of Z to get zHat ∈ R_q^κ
 	zHat := ZtoZhat(Zmat, ringQ)
 
-	if true {
-		coeff := ringQ.NewPoly()
-		ringQ.InvNTT(zHat[0], coeff)
-		fmt.Printf("[DEBUG] zHat[0](0) = %d (expected %d)\n", UnsignedToSigned(coeff.Coeffs[0][0], ringQ.Modulus[0]), Zmat[0][0])
-	}
-
 	// Precompute the negacyclic transposes of the trapdoor polynomials for
 	// assembling x. SamplePz uses the originals and applies the transpose
 	// internally when computing its dot-products.
@@ -275,13 +269,13 @@ func GaussSamp(
 		ringQ.InvNTT(u, uCoeff)
 
 		sumCheck := ringQ.NewPoly()
-		ringQ.Add(ApCoeff, GzCoeff_FromMat, sumCheck)
+		ringQ.Add(ApCoeff, GzCoeff_FromVector, sumCheck)
 		ringQ.Sub(sumCheck, uCoeff, sumCheck)
 
 		diff0 := centre(sumCheck.Coeffs[0][0])
 		if diff0 != 0 {
 			log.Printf("[CHECK] A·p coeff[0]=%d", centre(ApCoeff.Coeffs[0][0]))
-			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff_FromMat.Coeffs[0][0]))
+			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff_FromVector.Coeffs[0][0]))
 			log.Printf("[CHECK] u coeff[0]=%d", centre(uCoeff.Coeffs[0][0]))
 			log.Fatalf("[CHECK] A·p+G·z mismatch at slot 0: %d", diff0)
 		}
