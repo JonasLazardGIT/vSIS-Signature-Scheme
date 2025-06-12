@@ -39,7 +39,21 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 		log.Fatal("empty gadget vector")
 	}
 
-	q := int64(ringQ.Modulus[0])
+	q := ringQ.Modulus[0]
+
+	// psiInv holds the coefficient-wise inverse of NTT(1).
+	psi := ringQ.NewPoly()
+	for i := 0; i < N; i++ {
+		psi.Coeffs[0][i] = 1
+	}
+	ringQ.NTT(psi, psi)
+	psiInv := make([]uint64, N)
+	for i := 0; i < N; i++ {
+		standard := ring.InvMFormConstant(psi.Coeffs[0][i], q, ringQ.MredParams[0])
+		invStd := ring.ModExp(standard, q-2, q)
+		psiInv[i] = ring.MForm(invStd, q, ringQ.BredParams[0])
+	}
+
 	out := make([]*ring.Poly, k)
 
 	for row := 0; row < k; row++ {
@@ -49,13 +63,19 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 
 		p := ringQ.NewPoly() // coefficient domain
 		for t := 0; t < N; t++ {
-			v := Z[row][t] % q // canonical 0…q-1
+			v := Z[row][t] % int64(q) // canonical 0…q-1
 			if v < 0 {
-				v += q
+				v += int64(q)
 			}
 			p.Coeffs[0][t] = uint64(v)
 		}
 		ringQ.NTT(p, p) // to evaluation domain
+
+		// multiply by psi^{-1} coefficient-wise so that G·zHat matches
+		for t := 0; t < N; t++ {
+			p.Coeffs[0][t] = ring.MRedConstant(p.Coeffs[0][t], psiInv[t], q, ringQ.MredParams[0])
+		}
+
 		out[row] = p
 	}
 	return out
