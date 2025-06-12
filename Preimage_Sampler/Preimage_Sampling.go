@@ -33,59 +33,30 @@ func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
 	return
 }
 
-// ZtoZhat converts an integer matrix Z ∈ ℤ^{κ×N} into polys in R_q^κ (full CRT).
 func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
-	k := len(Z)
+	k, N := len(Z), ringQ.N
 	if k == 0 {
-		log.Fatalf("ZtoZhat: empty gadget vector")
+		log.Fatal("empty gadget vector")
 	}
 
-	N := ringQ.N
-	for row := range Z {
-		if len(Z[row]) != N {
-			log.Fatalf("ZtoZhat: row %d has length %d (want %d)", row, len(Z[row]), N)
-		}
-	}
-
+	q := int64(ringQ.Modulus[0])
 	out := make([]*ring.Poly, k)
-	halfQ := ringQ.Modulus[0] / 2
+
 	for row := 0; row < k; row++ {
-		P := ringQ.NewPoly()
-		for lvl, qi := range ringQ.Modulus {
-			mod := qi
-			for t := 0; t < N; t++ {
-				val := Z[row][t]
-				if val >= int64(halfQ) || val < -int64(halfQ) {
-					log.Printf("ZtoZhat warning: coeff row=%d idx=%d value=%d outside (-q/2,q/2)", row, t, val)
-				}
-				P.Coeffs[lvl][t] = SignedToUnsigned(val, mod)
-			}
+		if len(Z[row]) != N {
+			log.Fatalf("row %d length %d ≠ %d", row, len(Z[row]), N)
 		}
-		ringQ.NTT(P, P)
-		out[row] = P
-	}
-	return out
-}
 
-// ZhatToZ converts a slice of NTT-domain polys back into an integer matrix
-// Z ∈ ℤ^{κ×N}. It assumes each input polynomial encodes the same coefficient
-// across all CRT levels.
-func ZhatToZ(zHat []*ring.Poly, ringQ *ring.Ring) [][]int64 {
-	k := len(zHat)
-	if k == 0 {
-		log.Fatalf("ZhatToZ: empty input slice")
-	}
-
-	N := ringQ.N
-	out := make([][]int64, k)
-	for row := 0; row < k; row++ {
-		coeff := ringQ.NewPoly()
-		ringQ.InvNTT(zHat[row], coeff)
-		rowVals := make([]int64, N)
+		p := ringQ.NewPoly() // coefficient domain
 		for t := 0; t < N; t++ {
-			rowVals[t] = UnsignedToSigned(coeff.Coeffs[0][t], ringQ.Modulus[0])
+			v := Z[row][t] % q // canonical 0…q-1
+			if v < 0 {
+				v += q
+			}
+			p.Coeffs[0][t] = uint64(v)
 		}
-		out[row] = rowVals
+		ringQ.NTT(p, p) // to evaluation domain
+		out[row] = p
 	}
 	return out
 }
@@ -265,20 +236,32 @@ func GaussSamp(
 			ringQ.MulCoeffsMontgomery(Gz[j], zHat[j], tmp)
 			ringQ.Add(GzEval, tmp, GzEval)
 		}
-		GzCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(GzEval, GzCoeff)
+		GzCoeff_FromMat := ringQ.NewPoly()
+		for j := 0; j < ringQ.N; j++ {
+			recomb := int64(0)
+			for idx := k - 1; idx >= 0; idx-- {
+				recomb = (recomb*int64(base) + Zmat[idx][j]) % int64(ringQ.Modulus[0])
+			}
+			GzCoeff_FromMat.Coeffs[0][j] = SignedToUnsigned(recomb, ringQ.Modulus[0])
+		}
+
+		GzCoeff_FromVector := ringQ.NewPoly()
+		ringQ.InvNTT(GzEval, GzCoeff_FromVector)
+		for t := 0; t < 10; t++ {
+			fmt.Printf(("G.Z fromMat coeff[%d]=%d  G.Z FromVector coeff[%d]=%d\n"), t, (GzCoeff_FromMat.Coeffs[0][t]), t, (GzCoeff_FromVector.Coeffs[0][t]))
+		}
 
 		uCoeff := ringQ.NewPoly()
 		ringQ.InvNTT(u, uCoeff)
 
 		sumCheck := ringQ.NewPoly()
-		ringQ.Add(ApCoeff, GzCoeff, sumCheck)
+		ringQ.Add(ApCoeff, GzCoeff_FromMat, sumCheck)
 		ringQ.Sub(sumCheck, uCoeff, sumCheck)
 
 		diff0 := centre(sumCheck.Coeffs[0][0])
 		if diff0 != 0 {
 			log.Printf("[CHECK] A·p coeff[0]=%d", centre(ApCoeff.Coeffs[0][0]))
-			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff.Coeffs[0][0]))
+			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff_FromMat.Coeffs[0][0]))
 			log.Printf("[CHECK] u coeff[0]=%d", centre(uCoeff.Coeffs[0][0]))
 			log.Fatalf("[CHECK] A·p+G·z mismatch at slot 0: %d", diff0)
 		}
