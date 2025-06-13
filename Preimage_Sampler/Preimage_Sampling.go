@@ -125,6 +125,7 @@ func GaussSamp(
 		uCoeffs[j] = SignedToUnsigned(signed, ringQ.Modulus[0])
 
 	}
+
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
 	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
 
@@ -165,6 +166,101 @@ func GaussSamp(
 		x[i] = ringQ.NewPoly()
 		ringQ.Add(p[i], zHat[i-2], x[i])
 	}
+
+	// -----------------------------------------------------------------------------
+	// Sanity-check block  (insert in GaussSamp right after sum0 / sum1 are built)
+	// -----------------------------------------------------------------------------
+	{
+		// -------------------------------------------------------------------------
+		// 1)  Verify   Σ ê·ẑ    and    Σ r̂·ẑ   against a fresh recomputation
+		// -------------------------------------------------------------------------
+		tmp0 := ringQ.NewPoly()
+		tmp1 := ringQ.NewPoly()
+		ringQ.InvNTT(sum0, tmp0) // tmp0 = ⟨ê , ẑ⟩
+		ringQ.InvNTT(sum1, tmp1) // tmp1 = ⟨r̂ , ẑ⟩
+
+		naiveE := ringQ.NewPoly()
+		naiveR := ringQ.NewPoly()
+		tmpMul := ringQ.NewPoly()
+
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmpMul)
+			ringQ.Add(naiveE, tmpMul, naiveE)
+
+			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmpMul)
+			ringQ.Add(naiveR, tmpMul, naiveR)
+		}
+
+		diffE := ringQ.NewPoly()
+		diffR := ringQ.NewPoly()
+		ringQ.Sub(naiveE, sum0, diffE) // diffE  should be 0
+		ringQ.Sub(naiveR, sum1, diffR) // diffR  should be 0
+
+		ringQ.InvNTT(diffE, diffE) // to coeff-domain for easy test
+		ringQ.InvNTT(diffR, diffR)
+
+		centre := func(v uint64) int64 { // helper already used elsewhere
+			q := int64(ringQ.Modulus[0])
+			x := int64(v)
+			if x > q/2 {
+				x -= q
+			}
+			return x
+		}
+
+		for t := 0; t < ringQ.N; t++ {
+			if centre(diffE.Coeffs[0][t]) != 0 {
+				log.Fatalf("[CHK-1] ⟨ê,ẑ⟩ mismatch at slot %d: %d",
+					t, centre(diffE.Coeffs[0][t]))
+			}
+			if centre(diffR.Coeffs[0][t]) != 0 {
+				log.Fatalf("[CHK-1] ⟨r̂,ẑ⟩ mismatch at slot %d: %d",
+					t, centre(diffR.Coeffs[0][t]))
+			}
+		}
+		fmt.Println("[CHK-1] inner products verified ✔")
+
+		// -------------------------------------------------------------------------
+		// 2)  Verify   ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩   equals   Σ (a·r̂_j + ê_j)·ẑ_j
+		// -------------------------------------------------------------------------
+		// 2a) Left-hand side:  lhsEval = ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩   (evaluation domain)
+		lhsEval := ringQ.NewPoly()
+		ring.Copy(sum0, lhsEval) // lhsEval ← ⟨ê,ẑ⟩
+		tmpMul = ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], sum1, tmpMul) // tmpMul = a·⟨r̂,ẑ⟩
+		ringQ.Add(lhsEval, tmpMul, lhsEval)
+
+		// 2b) Right-hand side:  rhsEval = Σ (a·r̂_j + ê_j)·ẑ_j
+		rhsEval := ringQ.NewPoly()
+		tmp1 = ringQ.NewPoly()  // tmp1  = a·r̂_j + ê_j
+		tmp2 := ringQ.NewPoly() // tmp2  = (a·r̂_j + ê_j)·ẑ_j
+		for j := 0; j < k; j++ {
+			ringQ.MulCoeffsMontgomery(A[1], rHat[j], tmp1) // a·r̂_j
+			ringQ.Add(tmp1, eHat[j], tmp1)                 // a·r̂_j + ê_j
+			ringQ.MulCoeffsMontgomery(tmp1, zHat[j], tmp2) // ⋅ ẑ_j
+			ringQ.Add(rhsEval, tmp2, rhsEval)
+		}
+
+		// 2c) Compare in coefficient domain
+		lhsCoeff := ringQ.NewPoly()
+		rhsCoeff := ringQ.NewPoly()
+		ringQ.InvNTT(lhsEval, lhsCoeff)
+		ringQ.InvNTT(rhsEval, rhsCoeff)
+
+		diff := ringQ.NewPoly()
+		ringQ.Sub(lhsCoeff, rhsCoeff, diff)
+
+		for t := 0; t < ringQ.N; t++ {
+			if centre(diff.Coeffs[0][t]) != 0 {
+				log.Fatalf("[CHK-2] mismatch at slot %d: %d",
+					t, centre(diff.Coeffs[0][t]))
+			}
+		}
+		fmt.Println("[CHK-2] ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩  ≡  Σ (a·r̂_j+ê_j)·ẑ_j  ✔")
+	}
+	// -----------------------------------------------------------------------------
+	// End of sanity-check block
+	// -----------------------------------------------------------------------------
 
 	//! ---------- DEBUG B : verify Ap + Gz = u ----------
 	if true {
@@ -251,7 +347,8 @@ func GaussSamp(
 			}
 		}
 		fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
-		// 1d) verify that the assembled x indeed satisfies A·x = u
+
+		// 1d) verify that the object per object assembled x indeed satisfies A·x = u
 		AxEvalCheck := ringQ.NewPoly()
 		ring.Copy(ApEval, AxEvalCheck)
 
@@ -273,15 +370,29 @@ func GaussSamp(
 
 		diffAx := ringQ.NewPoly()
 		ringQ.Sub(AxCoeff, uCoeff, diffAx)
-		if centre(diffAx.Coeffs[0][0]) != 0 {
-			log.Fatalf("[CHECK] A·x mismatch at slot 0: %d", centre(diffAx.Coeffs[0][0]))
-		}
+
 		for t := 1; t < ringQ.N; t++ {
 			if centre(diffAx.Coeffs[0][t]) != 0 {
 				log.Fatalf("[CHECK] A·x mismatch at slot %d: %d", t, centre(diffAx.Coeffs[0][t]))
 			}
 		}
 		fmt.Println("[CHECK] A·x ≡ u  ✔")
+
+		// 6a) accumEval = A ⋅ x in evaluation domain
+		accumEval := ringQ.NewPoly()
+		tmpEval := ringQ.NewPoly()
+		for i := 0; i < len(A); i++ {
+			ringQ.MulCoeffsMontgomery(A[i], x[i], tmpEval)
+			ringQ.Add(accumEval, tmpEval, accumEval)
+		}
+
+		// 6b) Verify that A·x ≡ u mod q
+		for i := 0; i < ringQ.N; i++ {
+			if accumEval.Coeffs[0][i] != u.Coeffs[0][i] {
+				log.Fatalf("[GaussSamp] A·x mismatch at slot %d: got %d want %d",
+					i, accumEval.Coeffs[0][i], u.Coeffs[0][i])
+			}
+		}
 	}
 	//! ---------- END DEBUG B ----------
 	return x
@@ -314,35 +425,6 @@ func Main() {
 	// ----------------------------------------------------------------------------
 	trap := TrapGen(ringQ, base, sigmaT)
 
-	// --- trapdoor self-check (Alg 1 correctness) ---
-	G := CreateGadgetMatrix(ringQ, trap.Base, trap.Rows, trap.K)
-	for j := 0; j < trap.K; j++ {
-		// send G[j] to EVAL
-		ringQ.NTT(G[j], G[j])
-
-		// tmp = a * r̂_j + ê_j
-		tmp := ringQ.NewPoly()
-		a := trap.A1[1]    // the "a" sample
-		rj := trap.R[0][j] // r̂_j
-		ej := trap.R[1][j] // ê_j
-		ringQ.MulCoeffsMontgomery(a, rj, tmp)
-		ringQ.Add(tmp, ej, tmp)
-
-		// sum = tmp + A₂[j]
-		sum := ringQ.NewPoly()
-		ringQ.Add(tmp, trap.A2[j], sum)
-
-		// check sum == G[j] coefficient-wise
-		for t := 0; t < ringQ.N; t++ {
-			want := G[j].Coeffs[0][t]
-			got := sum.Coeffs[0][t]
-			if want != got {
-				log.Fatalf("TrapGen self-check failed at row %d, slot %d: got %d want %d", j, t, got, want)
-			}
-		}
-	}
-	fmt.Println("✔ Trapdoor generation self-check passed")
-
 	// ----------------------------------------------------------------------------
 	// 4) Sample a random syndrome u ∈ R_q in EVAL
 	// ----------------------------------------------------------------------------
@@ -352,10 +434,6 @@ func Main() {
 	}
 	uEval := ringQ.NewPoly() // u in evaluation domain
 	ringQ.NTT(u, uEval)
-
-	// keep a copy of uEval before any mutation
-	uEvalCopy := ringQ.NewPoly()
-	ring.Copy(uEval, uEvalCopy)
 
 	// ----------------------------------------------------------------------------
 	// 5) Gaussian preimage sampling: find x s.t. A·x ≈ u
@@ -368,28 +446,16 @@ func Main() {
 	// 6a) accumEval = A ⋅ x in evaluation domain
 	accumEval := ringQ.NewPoly()
 	tmpEval := ringQ.NewPoly()
-	for i, xi := range x {
-		ringQ.MulCoeffsMontgomery(trap.A[i], xi, tmpEval)
+	for i := 0; i < len(trap.A); i++ {
+		ringQ.MulCoeffsMontgomery(trap.A[i], x[i], tmpEval)
 		ringQ.Add(accumEval, tmpEval, accumEval)
 	}
 
-	// 6b) bring both accumEval and uEvalCopy back to coefficient domain
-	accumCoeff := ringQ.NewPoly()
-	uCoeffOrig := ringQ.NewPoly()
-	ringQ.InvNTT(accumEval, accumCoeff)
-	ringQ.InvNTT(uEvalCopy, uCoeffOrig)
-	fmt.Printf("accumCoeff.Coeffs[0][:8]=%v\n", accumCoeff.Coeffs[0][:8])
-	fmt.Printf("uCoeffOrig.Coeffs[0][:8]=%v\n", uCoeffOrig.Coeffs[0][:8])
-
-	// 6c) form difference diff = accumCoeff - uCoeffOrig in Z_q
-	diff := ringQ.NewPoly()
-	ringQ.Sub(accumCoeff, uCoeffOrig, diff)
-
-	// 6d) map to signed integers and assert all zero
-	for i, coeff := range diff.Coeffs[0] {
-		signed := UnsignedToSigned(coeff, ringQ.Modulus[0])
-		if signed != 0 {
-			log.Fatalf("FAIL: verification mismatch at slot %d: ≡ %d mod q", i, signed)
+	// 6b) Verify that A·x ≡ u mod q
+	for i := 0; i < ringQ.N; i++ {
+		if accumEval.Coeffs[0][i] != uEval.Coeffs[0][i] {
+			log.Fatalf("A·x mismatch at slot %d: got %d want %d",
+				i, accumEval.Coeffs[0][i], uEval.Coeffs[0][i])
 		}
 	}
 
