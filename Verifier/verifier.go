@@ -120,7 +120,7 @@ func Verify() bool {
 	acc := ringQ.NewPoly()
 	tmp := ringQ.NewPoly()
 	for i, si := range SEval {
-		ringQ.MulCoeffsMontgomery(Aeval[i], si, tmp)
+		ringQ.MulCoeffs(Aeval[i], si, tmp)
 		ringQ.Add(acc, tmp, acc)
 	}
 	if !ringQ.Equal(acc, targetPoly) {

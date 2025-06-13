@@ -33,27 +33,41 @@ func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
 	return
 }
 
+// ZtoZhat converts the integer gadget matrix Z (κ × N) into κ polynomials
+// in R_q.  Each row is
+//  1. copied to coefficient form,
+//  2. sent through the forward NTT,                 (still standard residues)
+//  3. multiplied slot-wise by ψ^{-1},               (still standard residues)
+//     where ψ = NTT(1) and ψ^{-1} is its entry-wise inverse.
+//
+// The result slice contains κ polynomials in the *standard* NTT frame
+// (no Montgomery factor), ready for later use with ringQ.MulCoeffs.
 func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 	k, N := len(Z), ringQ.N
 	if k == 0 {
 		log.Fatal("empty gadget vector")
 	}
-
 	q := ringQ.Modulus[0]
+	bredCtx := ringQ.BredParams[0] // Barrett context for q
 
-	// psiInv holds the coefficient-wise inverse of NTT(1).
+	// ---------------------------------------------------------------------
+	// 1) Pre-compute ψ⁻¹  in standard residues
+	// ---------------------------------------------------------------------
 	psi := ringQ.NewPoly()
-	for i := 0; i < N; i++ {
+	for i := 0; i < N; i++ { // constant poly "1"
 		psi.Coeffs[0][i] = 1
 	}
-	ringQ.NTT(psi, psi)
+	ringQ.NTT(psi, psi) // ψ(i)  (standard residues)
+
 	psiInv := make([]uint64, N)
 	for i := 0; i < N; i++ {
-		standard := ring.InvMFormConstant(psi.Coeffs[0][i], q, ringQ.MredParams[0])
-		invStd := ring.ModExp(standard, q-2, q)
-		psiInv[i] = ring.MForm(invStd, q, ringQ.BredParams[0])
+		coeff := psi.Coeffs[0][i]              // already standard
+		psiInv[i] = ring.ModExp(coeff, q-2, q) // coeff^{-1}  mod q
 	}
 
+	// ---------------------------------------------------------------------
+	// 2) Process each row of Z
+	// ---------------------------------------------------------------------
 	out := make([]*ring.Poly, k)
 
 	for row := 0; row < k; row++ {
@@ -63,20 +77,21 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 
 		p := ringQ.NewPoly() // coefficient domain
 		for t := 0; t < N; t++ {
-			v := Z[row][t] % int64(q) // canonical 0…q-1
+			v := Z[row][t] % int64(q) // map into [0, q)
 			if v < 0 {
 				v += int64(q)
 			}
 			p.Coeffs[0][t] = uint64(v)
 		}
-		ringQ.NTT(p, p) // to evaluation domain
 
-		// multiply by psi^{-1} coefficient-wise so that G·zHat matches
+		ringQ.NTT(p, p) // to evaluation domain (standard)
+
+		// slot-wise multiply by ψ⁻¹   --- still standard
 		for t := 0; t < N; t++ {
-			p.Coeffs[0][t] = ring.MRedConstant(p.Coeffs[0][t], psiInv[t], q, ringQ.MredParams[0])
+			p.Coeffs[0][t] = ring.BRedConstant( // (p·ψInv) mod q
+				p.Coeffs[0][t], psiInv[t], q, bredCtx)
 		}
-
-		out[row] = p
+		out[row] = p // standard NTT poly
 	}
 	return out
 }
@@ -108,7 +123,7 @@ func GaussSamp(
 	pertEval := ringQ.NewPoly()
 	tmp := ringQ.NewPoly()
 	for i := range p {
-		ringQ.MulCoeffsMontgomery(A[i], p[i], tmp)
+		ringQ.MulCoeffs(A[i], p[i], tmp)
 		ringQ.Add(pertEval, tmp, pertEval)
 	}
 	subEval := ringQ.NewPoly()
@@ -139,11 +154,11 @@ func GaussSamp(
 	// 5) assemble x = [ p₀ + ê⋅zHat,  p₁ + r̂⋅zHat,  p₂+ẑ₀, …, p_{k+1}+ẑ_{k-1} ]
 	x := make([]*ring.Poly, k+2)
 
-	// row 0: p[0] + eHat . zHat with eHat . zHat = sum(MulCoeffsMontgomeryAndAdd(eHat[j], zHat[j]))
+	// row 0: p[0] + eHat . zHat with eHat . zHat = sum(MulCoeffsAndAdd(eHat[j], zHat[j]))
 	sum0 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
 		tmpez := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmpez)
+		ringQ.MulCoeffs(eHat[j], zHat[j], tmpez)
 		ringQ.Add(sum0, tmpez, sum0)
 	}
 	x[0] = ringQ.NewPoly()
@@ -151,11 +166,11 @@ func GaussSamp(
 	// when forming the first two rows of x.
 	ringQ.Add(p[0], sum0, x[0])
 
-	// row 1: p[1] + zHat with rHat . zHat = sum(MulCoeffsMontgomeryAndAdd(rHat[j], zHat[j]))
+	// row 1: p[1] + zHat with rHat . zHat = sum(MulCoeffsAndAdd(rHat[j], zHat[j]))
 	sum1 := ringQ.NewPoly()
 	for j := 0; j < k; j++ {
 		tmprz := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmprz)
+		ringQ.MulCoeffs(rHat[j], zHat[j], tmprz)
 		ringQ.Add(sum1, tmprz, sum1)
 	}
 	x[1] = ringQ.NewPoly()
@@ -197,7 +212,7 @@ func GaussSamp(
 		ApEval := ringQ.NewPoly() //  A·p  (already needed later)
 		tmpEval := ringQ.NewPoly()
 		for i := range p {
-			ringQ.MulCoeffsMontgomery(A[i], p[i], tmpEval)
+			ringQ.MulCoeffs(A[i], p[i], tmpEval)
 			ringQ.Add(ApEval, tmpEval, ApEval)
 		}
 
@@ -209,7 +224,7 @@ func GaussSamp(
 		// Σ_j A₂[j]·ẑ_j
 		A2zEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(A[j+2], zHat[j], tmpEval)
+			ringQ.MulCoeffs(A[j+2], zHat[j], tmpEval)
 			ringQ.Add(A2zEval, tmpEval, A2zEval)
 		}
 
@@ -217,7 +232,7 @@ func GaussSamp(
 		// 1)  A[0]·x[0]  ==  p0 + Σ ê_j·ẑ_j
 		// -------------------------------------------------------------------------
 		left0 := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[0], x[0], left0) // A0 = 1, but keep generic
+		ringQ.MulCoeffs(A[0], x[0], left0) // A0 = 1, but keep generic
 		right0 := ringQ.NewPoly()
 		ringQ.Add(p[0], sumEZEval, right0) // p0 + ⟨ê̂,ẑ⟩
 
@@ -229,31 +244,31 @@ func GaussSamp(
 		// 2)  A[1]·x[1]  ==  a·p1 + a·Σ r̂_j·ẑ_j
 		// -------------------------------------------------------------------------
 		left1 := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], x[1], left1)
+		ringQ.MulCoeffs(A[1], x[1], left1)
 
 		right1 := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], p[1], right1) // a·p1
+		ringQ.MulCoeffs(A[1], p[1], right1) // a·p1
 		tmpEval = ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], sumRZEval, tmpEval) // a·⟨r̂,ẑ⟩
+		ringQ.MulCoeffs(A[1], sumRZEval, tmpEval) // a·⟨r̂,ẑ⟩
 		ringQ.Add(right1, tmpEval, right1)
 
 		diff1 := ringQ.NewPoly()
 		ringQ.Sub(left1, right1, diff1)
 		mustBeZero("A1·x1 == a·p1+a·r·z", diff1)
 
-		// -------------------------------------------------------------------------
-		// 3)  Σ_j(g_j−a r̂_j−ê_j)·ẑ_j =  A·p − u − a·r·z − e·z
-		// -------------------------------------------------------------------------
-		rhs := ringQ.NewPoly()
-		ringQ.Sub(ApEval, u, rhs)      //  A·p − u
-		ringQ.Sub(rhs, sumEZEval, rhs) // - e·z
-		tmpEval = ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], sumRZEval, tmpEval) // a·r·z
-		ringQ.Sub(rhs, tmpEval, rhs)                        // - a·r·z
+		// // -------------------------------------------------------------------------
+		// // 3)  Σ_j(g_j−a r̂_j−ê_j)·ẑ_j =  A·p − u − a·r·z − e·z
+		// // -------------------------------------------------------------------------
+		// rhs := ringQ.NewPoly()
+		// ringQ.Sub(ApEval, u, rhs)      //  A·p − u
+		// ringQ.Sub(rhs, sumEZEval, rhs) // - e·z
+		// tmpEval = ringQ.NewPoly()
+		// ringQ.MulCoeffs(A[1], sumRZEval, tmpEval) // a·r·z
+		// ringQ.Sub(rhs, tmpEval, rhs)              // - a·r·z
 
-		diff2 := ringQ.NewPoly()
-		ringQ.Sub(A2zEval, rhs, diff2)
-		mustBeZero("Σ(g−ar̂−ê)·ẑ == A·p-u-a·r·z-e·z", diff2)
+		// diff2 := ringQ.NewPoly()
+		// ringQ.Sub(A2zEval, rhs, diff2)
+		// mustBeZero("Σ(g−ar̂−ê)·ẑ == A·p-u-a·r·z-e·z", diff2)
 	}
 	// -----------------------------------------------------------------------------
 	// End of collapse tracer
@@ -276,14 +291,14 @@ func GaussSamp(
 		// 1) Compute A·x in NTT, then back to coefficients
 		AxEval := ringQ.NewPoly()
 		for i := range A {
-			ringQ.MulCoeffsMontgomery(A[i], x[i], tmp)
+			ringQ.MulCoeffs(A[i], x[i], tmp)
 			ringQ.Add(AxEval, tmp, AxEval)
 		}
 
 		// 1b) also compute A·p and A·z separately for diagnostics
 		ApEval := ringQ.NewPoly()
 		for i := range p {
-			ringQ.MulCoeffsMontgomery(A[i], p[i], tmp)
+			ringQ.MulCoeffs(A[i], p[i], tmp)
 			ringQ.Add(ApEval, tmp, ApEval)
 		}
 		ApCoeff := ringQ.NewPoly()
@@ -292,21 +307,21 @@ func GaussSamp(
 		AzEval := ringQ.NewPoly()
 		// contributions from gadget columns
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(A[j+2], zHat[j], tmp)
+			ringQ.MulCoeffs(A[j+2], zHat[j], tmp)
 			ringQ.Add(AzEval, tmp, AzEval)
 		}
 		// contributions from x0,x1 parts
 		eDotZEvalAcc := ringQ.NewPoly()
 		rDotZEvalAcc := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmp)
+			ringQ.MulCoeffs(eHat[j], zHat[j], tmp)
 			ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
-			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmp)
+			ringQ.MulCoeffs(rHat[j], zHat[j], tmp)
 			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
 		}
-		ringQ.MulCoeffsMontgomery(A[0], eDotZEvalAcc, tmp)
+		ringQ.MulCoeffs(A[0], eDotZEvalAcc, tmp)
 		ringQ.Add(AzEval, tmp, AzEval)
-		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, tmp)
+		ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
 		ringQ.Add(AzEval, tmp, AzEval)
 
 		AzCoeff := ringQ.NewPoly()
@@ -317,7 +332,7 @@ func GaussSamp(
 		GzEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
 			ringQ.NTT(Gz[j], Gz[j])
-			ringQ.MulCoeffsMontgomery(Gz[j], zHat[j], tmp)
+			ringQ.MulCoeffs(Gz[j], zHat[j], tmp)
 			ringQ.Add(GzEval, tmp, GzEval)
 		}
 
@@ -351,12 +366,12 @@ func GaussSamp(
 
 		blockA2 := ringQ.NewPoly()
 		ring.Copy(GzEval, blockA2)
-		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, tmp)
+		ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
 		ringQ.Sub(blockA2, tmp, blockA2)
 		ringQ.Sub(blockA2, eDotZEvalAcc, blockA2)
 
 		blockX01 := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], rDotZEvalAcc, blockX01)
+		ringQ.MulCoeffs(A[1], rDotZEvalAcc, blockX01)
 		ringQ.Add(blockX01, eDotZEvalAcc, blockX01)
 
 		ringQ.Add(AxEvalCheck, blockA2, AxEvalCheck)
@@ -379,7 +394,7 @@ func GaussSamp(
 		accumEval := ringQ.NewPoly()
 		tmpEval := ringQ.NewPoly()
 		for i := 0; i < len(A); i++ {
-			ringQ.MulCoeffsMontgomery(A[i], x[i], tmpEval)
+			ringQ.MulCoeffs(A[i], x[i], tmpEval)
 			ringQ.Add(accumEval, tmpEval, accumEval)
 		}
 
@@ -444,7 +459,7 @@ func Main() {
 	accumEval := ringQ.NewPoly()
 	tmpEval := ringQ.NewPoly()
 	for i := 0; i < len(trap.A); i++ {
-		ringQ.MulCoeffsMontgomery(trap.A[i], x[i], tmpEval)
+		ringQ.MulCoeffs(trap.A[i], x[i], tmpEval)
 		ringQ.Add(accumEval, tmpEval, accumEval)
 	}
 

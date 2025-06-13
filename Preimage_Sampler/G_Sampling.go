@@ -114,7 +114,7 @@ func TrapGen(ringQ *ring.Ring, base uint64, sigmaT float64) Trapdoor {
 	for j := 0; j < k; j++ {
 		// assume a, Rhat[j], Ehat[j], G[j] are all in EVAL
 		tmp := ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(a, Rhat[j], tmp)
+		ringQ.MulCoeffs(a, Rhat[j], tmp)
 		ringQ.Add(tmp, Ehat[j], tmp)
 		A2[j] = ringQ.NewPoly()
 		ringQ.Sub(G[j], tmp, A2[j])

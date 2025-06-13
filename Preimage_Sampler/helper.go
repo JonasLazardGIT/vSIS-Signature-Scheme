@@ -211,7 +211,7 @@ func DotProduct(r *ring.Ring, a, b []*ring.Poly) *ring.Poly {
 		r.InvNTT(a[i], coeff)
 		coeff = AutomorphismTranspose(r, coeff)
 		r.NTT(coeff, coeff)
-		r.MulCoeffsMontgomery(coeff, b[i], tmp)
+		r.MulCoeffs(coeff, b[i], tmp)
 		r.Add(acc, tmp, acc)
 	}
 	return acc
