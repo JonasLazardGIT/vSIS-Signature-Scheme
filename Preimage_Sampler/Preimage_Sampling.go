@@ -166,40 +166,12 @@ func GaussSamp(
 		x[i] = ringQ.NewPoly()
 		ringQ.Add(p[i], zHat[i-2], x[i])
 	}
-
 	// -----------------------------------------------------------------------------
-	// Sanity-check block  (insert in GaussSamp right after sum0 / sum1 are built)
+	// Collapse tracer – verifies each algebraic block inside A·x
 	// -----------------------------------------------------------------------------
 	{
-		// -------------------------------------------------------------------------
-		// 1)  Verify   Σ ê·ẑ    and    Σ r̂·ẑ   against a fresh recomputation
-		// -------------------------------------------------------------------------
-		tmp0 := ringQ.NewPoly()
-		tmp1 := ringQ.NewPoly()
-		ringQ.InvNTT(sum0, tmp0) // tmp0 = ⟨ê , ẑ⟩
-		ringQ.InvNTT(sum1, tmp1) // tmp1 = ⟨r̂ , ẑ⟩
-
-		naiveE := ringQ.NewPoly()
-		naiveR := ringQ.NewPoly()
-		tmpMul := ringQ.NewPoly()
-
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(eHat[j], zHat[j], tmpMul)
-			ringQ.Add(naiveE, tmpMul, naiveE)
-
-			ringQ.MulCoeffsMontgomery(rHat[j], zHat[j], tmpMul)
-			ringQ.Add(naiveR, tmpMul, naiveR)
-		}
-
-		diffE := ringQ.NewPoly()
-		diffR := ringQ.NewPoly()
-		ringQ.Sub(naiveE, sum0, diffE) // diffE  should be 0
-		ringQ.Sub(naiveR, sum1, diffR) // diffR  should be 0
-
-		ringQ.InvNTT(diffE, diffE) // to coeff-domain for easy test
-		ringQ.InvNTT(diffR, diffR)
-
-		centre := func(v uint64) int64 { // helper already used elsewhere
+		// shorthand helpers -------------------------------------------------------
+		centre := func(v uint64) int64 {
 			q := int64(ringQ.Modulus[0])
 			x := int64(v)
 			if x > q/2 {
@@ -207,59 +179,84 @@ func GaussSamp(
 			}
 			return x
 		}
-
-		for t := 0; t < ringQ.N; t++ {
-			if centre(diffE.Coeffs[0][t]) != 0 {
-				log.Fatalf("[CHK-1] ⟨ê,ẑ⟩ mismatch at slot %d: %d",
-					t, centre(diffE.Coeffs[0][t]))
+		mustBeZero := func(name string, poly *ring.Poly) {
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(poly, coeff)
+			for t := 0; t < ringQ.N; t++ {
+				if centre(coeff.Coeffs[0][t]) != 0 {
+					log.Fatalf("[TRACE] %s mismatch at slot %d: %d",
+						name, t, centre(coeff.Coeffs[0][t]))
+				}
 			}
-			if centre(diffR.Coeffs[0][t]) != 0 {
-				log.Fatalf("[CHK-1] ⟨r̂,ẑ⟩ mismatch at slot %d: %d",
-					t, centre(diffR.Coeffs[0][t]))
-			}
+			fmt.Printf("[TRACE] %s  ✔\n", name)
 		}
-		fmt.Println("[CHK-1] inner products verified ✔")
 
 		// -------------------------------------------------------------------------
-		// 2)  Verify   ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩   equals   Σ (a·r̂_j + ê_j)·ẑ_j
+		// Part 0 : pre-compute reusable pieces
 		// -------------------------------------------------------------------------
-		// 2a) Left-hand side:  lhsEval = ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩   (evaluation domain)
-		lhsEval := ringQ.NewPoly()
-		ring.Copy(sum0, lhsEval) // lhsEval ← ⟨ê,ẑ⟩
-		tmpMul = ringQ.NewPoly()
-		ringQ.MulCoeffsMontgomery(A[1], sum1, tmpMul) // tmpMul = a·⟨r̂,ẑ⟩
-		ringQ.Add(lhsEval, tmpMul, lhsEval)
+		ApEval := ringQ.NewPoly() //  A·p  (already needed later)
+		tmpEval := ringQ.NewPoly()
+		for i := range p {
+			ringQ.MulCoeffsMontgomery(A[i], p[i], tmpEval)
+			ringQ.Add(ApEval, tmpEval, ApEval)
+		}
 
-		// 2b) Right-hand side:  rhsEval = Σ (a·r̂_j + ê_j)·ẑ_j
-		rhsEval := ringQ.NewPoly()
-		tmp1 = ringQ.NewPoly()  // tmp1  = a·r̂_j + ê_j
-		tmp2 := ringQ.NewPoly() // tmp2  = (a·r̂_j + ê_j)·ẑ_j
+		sumEZEval := ringQ.NewPoly()
+		ring.Copy(sum0, sumEZEval) // ⟨ê̂,ẑ⟩
+		sumRZEval := ringQ.NewPoly()
+		ring.Copy(sum1, sumRZEval) // ⟨r̂,ẑ⟩
+
+		// Σ_j A₂[j]·ẑ_j
+		A2zEval := ringQ.NewPoly()
 		for j := 0; j < k; j++ {
-			ringQ.MulCoeffsMontgomery(A[1], rHat[j], tmp1) // a·r̂_j
-			ringQ.Add(tmp1, eHat[j], tmp1)                 // a·r̂_j + ê_j
-			ringQ.MulCoeffsMontgomery(tmp1, zHat[j], tmp2) // ⋅ ẑ_j
-			ringQ.Add(rhsEval, tmp2, rhsEval)
+			ringQ.MulCoeffsMontgomery(A[j+2], zHat[j], tmpEval)
+			ringQ.Add(A2zEval, tmpEval, A2zEval)
 		}
 
-		// 2c) Compare in coefficient domain
-		lhsCoeff := ringQ.NewPoly()
-		rhsCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(lhsEval, lhsCoeff)
-		ringQ.InvNTT(rhsEval, rhsCoeff)
+		// -------------------------------------------------------------------------
+		// 1)  A[0]·x[0]  ==  p0 + Σ ê_j·ẑ_j
+		// -------------------------------------------------------------------------
+		left0 := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[0], x[0], left0) // A0 = 1, but keep generic
+		right0 := ringQ.NewPoly()
+		ringQ.Add(p[0], sumEZEval, right0) // p0 + ⟨ê̂,ẑ⟩
 
-		diff := ringQ.NewPoly()
-		ringQ.Sub(lhsCoeff, rhsCoeff, diff)
+		diff0 := ringQ.NewPoly()
+		ringQ.Sub(left0, right0, diff0)
+		mustBeZero("A0·x0 == p0+e·z", diff0)
 
-		for t := 0; t < ringQ.N; t++ {
-			if centre(diff.Coeffs[0][t]) != 0 {
-				log.Fatalf("[CHK-2] mismatch at slot %d: %d",
-					t, centre(diff.Coeffs[0][t]))
-			}
-		}
-		fmt.Println("[CHK-2] ⟨ê,ẑ⟩ + a·⟨r̂,ẑ⟩  ≡  Σ (a·r̂_j+ê_j)·ẑ_j  ✔")
+		// -------------------------------------------------------------------------
+		// 2)  A[1]·x[1]  ==  a·p1 + a·Σ r̂_j·ẑ_j
+		// -------------------------------------------------------------------------
+		left1 := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], x[1], left1)
+
+		right1 := ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], p[1], right1) // a·p1
+		tmpEval = ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], sumRZEval, tmpEval) // a·⟨r̂,ẑ⟩
+		ringQ.Add(right1, tmpEval, right1)
+
+		diff1 := ringQ.NewPoly()
+		ringQ.Sub(left1, right1, diff1)
+		mustBeZero("A1·x1 == a·p1+a·r·z", diff1)
+
+		// -------------------------------------------------------------------------
+		// 3)  Σ_j(g_j−a r̂_j−ê_j)·ẑ_j =  A·p − u − a·r·z − e·z
+		// -------------------------------------------------------------------------
+		rhs := ringQ.NewPoly()
+		ringQ.Sub(ApEval, u, rhs)      //  A·p − u
+		ringQ.Sub(rhs, sumEZEval, rhs) // - e·z
+		tmpEval = ringQ.NewPoly()
+		ringQ.MulCoeffsMontgomery(A[1], sumRZEval, tmpEval) // a·r·z
+		ringQ.Sub(rhs, tmpEval, rhs)                        // - a·r·z
+
+		diff2 := ringQ.NewPoly()
+		ringQ.Sub(A2zEval, rhs, diff2)
+		mustBeZero("Σ(g−ar̂−ê)·ẑ == A·p-u-a·r·z-e·z", diff2)
 	}
 	// -----------------------------------------------------------------------------
-	// End of sanity-check block
+	// End of collapse tracer
 	// -----------------------------------------------------------------------------
 
 	//! ---------- DEBUG B : verify Ap + Gz = u ----------
