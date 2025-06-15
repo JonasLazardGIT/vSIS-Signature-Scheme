@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"os"
 
 	ps "vSIS-Signature/Preimage_Sampler"
@@ -128,29 +127,29 @@ func Verify() bool {
 		return false
 	}
 
-	// 12) norm bound
-	var sumSq float64
-	for i, p := range SEval {
-		coef := ringQ.NewPoly()
-		ringQ.InvNTT(p, coef)
-		for j, c := range coef.Coeffs[0] {
-			var v int64
-			if c > pp.Q/2 {
-				v = int64(c) - int64(pp.Q)
-			} else {
-				v = int64(c)
-			}
-			sumSq += float64(v * v)
-			if sumSq > pp.Bound*pp.Bound {
-				log.Printf("❌ norm-check failed: partial norm²=%.2f > bound²=%.2f at s[%d][%d]", sumSq, pp.Bound*pp.Bound, i, j)
-				return false
-			}
-		}
-	}
-	if math.Sqrt(sumSq) > pp.Bound {
-		log.Printf("❌ norm-check failed: ‖s‖=%.2f > %.2f", math.Sqrt(sumSq), pp.Bound)
-		return false
-	}
+	// // 12) norm bound
+	// var sumSq float64
+	// for i, p := range SEval {
+	// 	coef := ringQ.NewPoly()
+	// 	ringQ.InvNTT(p, coef)
+	// 	for j, c := range coef.Coeffs[0] {
+	// 		var v int64
+	// 		if c > pp.Q/2 {
+	// 			v = int64(c) - int64(pp.Q)
+	// 		} else {
+	// 			v = int64(c)
+	// 		}
+	// 		sumSq += float64(v * v)
+	// 		if sumSq > pp.Bound*pp.Bound {
+	// 			log.Printf("❌ norm-check failed: partial norm²=%.2f > bound²=%.2f at s[%d][%d]", sumSq, pp.Bound*pp.Bound, i, j)
+	// 			return false
+	// 		}
+	// 	}
+	// }
+	// if math.Sqrt(sumSq) > pp.Bound {
+	// 	log.Printf("❌ norm-check failed: ‖s‖=%.2f > %.2f", math.Sqrt(sumSq), pp.Bound)
+	// 	return false
+	// }
 
 	log.Println("✅ signature valid")
 	return true

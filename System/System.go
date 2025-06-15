@@ -35,8 +35,8 @@ type BMatrix struct {
 // B‐matrix and saves it to ./Parameters/Bmatrix.json.
 func Generate() {
 	// 1) Parameter arithmetic
-	n := 64
-	q := uint64(114689)
+	n := 512
+	q := uint64(8399873)
 	base := uint64(2)
 	// k = ⌈log_base(q)⌉
 	k := int(math.Ceil(math.Log(float64(q)) / math.Log(float64(base))))

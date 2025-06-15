@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"log"
 
-	"vSIS-Signature/Preimage_Sampler"
+	// "vSIS-Signature/Preimage_Sampler"
 	signer "vSIS-Signature/Signer"
 	Parameters "vSIS-Signature/System"
 	verifier "vSIS-Signature/Verifier"
 )
 
 func main() {
-	Preimage_Sampler.Main()
+	// Preimage_Sampler.Main()
 	// 1) Generate (or load) public system parameters
 	fmt.Println("🔧 Generating public parameters...")
 	Parameters.Generate()

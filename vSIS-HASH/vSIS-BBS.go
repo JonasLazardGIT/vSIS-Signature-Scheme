@@ -66,6 +66,8 @@ func ComputeBBSHash(
 
 	// 7) hadamard division: tEval = r ⊙ denomInv
 	tEval := ps.FieldMulBig(r, denomInv)
+	// All computations are in the evaluation domain
+	tEval.Domain = ps.Eval
 
 	return tEval, nil
 }
