@@ -51,16 +51,27 @@ func Sign() {
 		log.Fatalf("ring.NewRing: %v", err)
 	}
 
-	// 3) keygen → trapdoor
-	trap := ps.TrapGen(ringQ, params.Base, params.SigmaT)
-	log.Println("Trapdoor generated.")
-
-	// 4) write public and private keys
-	if err := savePublicKey("public_key/public_key.json", ringQ, &trap); err != nil {
-		log.Fatalf("savePublicKey: %v", err)
-	}
-	if err := savePrivateKey("private_key/private_key.json", ringQ, &trap); err != nil {
-		log.Fatalf("savePrivateKey: %v", err)
+	var trap ps.Trapdoor
+	if fileExists("public_key/public_key.json") && fileExists("private_key/private_key.json") {
+		log.Println("Loading existing keypair...")
+		pk, err := loadPublicKey("public_key/public_key.json")
+		if err != nil {
+			log.Fatalf("loadPublicKey: %v", err)
+		}
+		sk, err := loadPrivateKey("private_key/private_key.json")
+		if err != nil {
+			log.Fatalf("loadPrivateKey: %v", err)
+		}
+		trap = assembleTrapdoor(ringQ, pk, sk)
+	} else {
+		log.Println("Generating new keypair...")
+		trap = ps.TrapGen(ringQ, params.Base, params.SigmaT)
+		if err := savePublicKey("public_key/public_key.json", ringQ, &trap); err != nil {
+			log.Fatalf("savePublicKey: %v", err)
+		}
+		if err := savePrivateKey("private_key/private_key.json", ringQ, &trap); err != nil {
+			log.Fatalf("savePrivateKey: %v", err)
+		}
 	}
 
 	// 5) load B‐matrix from JSON and convert to CyclotomicFieldElem
@@ -166,8 +177,29 @@ func savePublicKey(path string, ringQ *ring.Ring, trap *ps.Trapdoor) error {
 	for i, a := range trap.A {
 		pub.A[i] = append([]uint64(nil), a.Coeffs[0]...)
 	}
-	out, _ := json.MarshalIndent(pub, "", "  ")
-	return os.WriteFile(path, out, 0644)
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString("{\n  \"A\": [\n"); err != nil {
+		return err
+	}
+	for i, poly := range pub.A {
+		line, _ := json.Marshal(poly)
+		if i < len(pub.A)-1 {
+			fmt.Fprintf(f, "    %s,\n", line)
+		} else {
+			fmt.Fprintf(f, "    %s\n", line)
+		}
+	}
+	if _, err := f.WriteString("  ],\n"); err != nil {
+		return err
+	}
+	fmt.Fprintf(f, "  \"base\": %d,\n", pub.Base)
+	fmt.Fprintf(f, "  \"k\": %d\n", pub.K)
+	_, err = f.WriteString("}\n")
+	return err
 }
 
 func savePrivateKey(path string, ringQ *ring.Ring, trap *ps.Trapdoor) error {
@@ -184,19 +216,118 @@ func savePrivateKey(path string, ringQ *ring.Ring, trap *ps.Trapdoor) error {
 	for i, r1 := range trap.R[1] {
 		priv.R1[i] = append([]uint64(nil), r1.Coeffs[0]...)
 	}
-	out, _ := json.MarshalIndent(priv, "", "  ")
-	return os.WriteFile(path, out, 0644)
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString("{\n  \"R0\": [\n"); err != nil {
+		return err
+	}
+	for i, poly := range priv.R0 {
+		line, _ := json.Marshal(poly)
+		if i < len(priv.R0)-1 {
+			fmt.Fprintf(f, "    %s,\n", line)
+		} else {
+			fmt.Fprintf(f, "    %s\n", line)
+		}
+	}
+	if _, err := f.WriteString("  ],\n  \"R1\": [\n"); err != nil {
+		return err
+	}
+	for i, poly := range priv.R1 {
+		line, _ := json.Marshal(poly)
+		if i < len(priv.R1)-1 {
+			fmt.Fprintf(f, "    %s,\n", line)
+		} else {
+			fmt.Fprintf(f, "    %s\n", line)
+		}
+	}
+	if _, err := f.WriteString("  ],\n"); err != nil {
+		return err
+	}
+	fmt.Fprintf(f, "  \"base\": %d,\n", priv.Base)
+	fmt.Fprintf(f, "  \"k\": %d\n", priv.K)
+	_, err = f.WriteString("}\n")
+	return err
 }
 
 func saveSignature(path string, message, x0, x1, target []uint64, signature [][]uint64) error {
 	_ = os.MkdirAll("Signature", 0755)
-	sig := SignatureData{
-		Message:   message,
-		X0:        x0,
-		X1:        x1,
-		Target:    target,
-		Signature: signature,
+	f, err := os.Create(path)
+	if err != nil {
+		return err
 	}
-	data, _ := json.MarshalIndent(sig, "", "  ")
-	return os.WriteFile(path, data, 0644)
+	defer f.Close()
+	msg, _ := json.Marshal(message)
+	x0b, _ := json.Marshal(x0)
+	x1b, _ := json.Marshal(x1)
+	tgt, _ := json.Marshal(target)
+	if _, err := fmt.Fprintf(f, "{\n  \"message\": %s,\n  \"x0\": %s,\n  \"x1\": %s,\n  \"target\": %s,\n  \"signature\": [\n", msg, x0b, x1b, tgt); err != nil {
+		return err
+	}
+	for i, poly := range signature {
+		line, _ := json.Marshal(poly)
+		if i < len(signature)-1 {
+			fmt.Fprintf(f, "    %s,\n", line)
+		} else {
+			fmt.Fprintf(f, "    %s\n", line)
+		}
+	}
+	_, err = f.WriteString("  ]\n}\n")
+	return err
+}
+
+func loadPublicKey(path string) (*PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var pk PublicKey
+	if err := json.Unmarshal(data, &pk); err != nil {
+		return nil, err
+	}
+	return &pk, nil
+}
+
+func loadPrivateKey(path string) (*PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var sk PrivateKey
+	if err := json.Unmarshal(data, &sk); err != nil {
+		return nil, err
+	}
+	return &sk, nil
+}
+
+func assembleTrapdoor(ringQ *ring.Ring, pk *PublicKey, sk *PrivateKey) ps.Trapdoor {
+	trap := ps.Trapdoor{Base: pk.Base, K: pk.K, Rows: 1, Cols: 2}
+	trap.A = make([]*ring.Poly, len(pk.A))
+	for i, a := range pk.A {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], a)
+		trap.A[i] = p
+	}
+	trap.R[0] = make([]*ring.Poly, len(sk.R0))
+	for i, r0 := range sk.R0 {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], r0)
+		trap.R[0][i] = p
+	}
+	trap.R[1] = make([]*ring.Poly, len(sk.R1))
+	for i, r1 := range sk.R1 {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], r1)
+		trap.R[1][i] = p
+	}
+	return trap
+}
+
+func fileExists(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
 }

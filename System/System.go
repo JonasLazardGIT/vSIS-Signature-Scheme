@@ -3,6 +3,7 @@ package Parameters
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -93,12 +94,24 @@ func Generate() {
 	}
 
 	bmat := BMatrix{B: Bcoeffs}
-	bmatData, err := json.MarshalIndent(bmat, "", "  ")
+	f, err := os.Create("Parameters/Bmatrix.json")
 	if err != nil {
-		log.Fatalf("failed to marshal B‐matrix: %v", err)
+		log.Fatalf("failed to open Bmatrix.json: %v", err)
 	}
-	if err := os.WriteFile("Parameters/Bmatrix.json", bmatData, 0644); err != nil {
-		log.Fatalf("failed to write Bmatrix.json: %v", err)
+	defer f.Close()
+	if _, err := f.WriteString("{\n  \"B\": [\n"); err != nil {
+		log.Fatalf("write failed: %v", err)
+	}
+	for i, poly := range bmat.B {
+		line, _ := json.Marshal(poly)
+		if i < len(bmat.B)-1 {
+			fmt.Fprintf(f, "    %s,\n", line)
+		} else {
+			fmt.Fprintf(f, "    %s\n", line)
+		}
+	}
+	if _, err := f.WriteString("  ]\n}\n"); err != nil {
+		log.Fatalf("write failed: %v", err)
 	}
 	log.Println("✔ B‐matrix written to ./Parameters/Bmatrix.json")
 }
