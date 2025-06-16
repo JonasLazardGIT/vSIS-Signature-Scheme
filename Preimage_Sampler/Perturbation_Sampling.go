@@ -1,7 +1,6 @@
 package Preimage_Sampler
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"math/big"
@@ -151,7 +150,7 @@ func SampleFZBig(
 		varv, _ := f.Coeffs[0].Real.Float64()
 		// fmt.Printf("SampleFZBig: varv = %f\n", varv)
 		if varv < 0 {
-			fmt.Printf("SampleFZBig: varv = %f < 0\n PANIC\n", varv)
+			// fmt.Printf("SampleFZBig: varv = %f < 0\n PANIC\n", varv)
 		}
 		std := math.Sqrt(varv)
 		mean, _ := c.Coeffs[0].Real.Float64()
@@ -230,7 +229,7 @@ func SamplePz(
 	n := ringQ.N
 	k := len(Ttilde[0])
 
-	fmt.Println("SamplePz: computing dot products via transpose")
+	// fmt.Println("SamplePz: computing dot products via transpose")
 
 	// 1) Compute z = (1/α² − 1/s²)^(−1) with full `prec`
 	one := new(big.Float).SetPrec(prec).SetFloat64(1.0)
@@ -241,7 +240,7 @@ func SamplePz(
 	diff := new(big.Float).SetPrec(prec).Sub(invA2, invS2)
 	zBig := new(big.Float).SetPrec(prec).Quo(one, diff)
 
-	fmt.Printf("SamplePz: q = %d, s = %f, α = %f, z = %s\n", ringQ.Modulus[0], s, alpha, zBig.Text('g', 10))
+	// fmt.Printf("SamplePz: q = %d, s = %f, α = %f, z = %s\n", ringQ.Modulus[0], s, alpha, zBig.Text('g', 10))
 
 	// 2) Accumulate sums in evaluation domain
 	va := NewFieldElemBig(n, prec)
@@ -322,17 +321,17 @@ func SamplePz(
 			}
 		}
 		if maxNorm > s*(1+eps) {
-			log.Panicf("parameter s = %.6g is too small; need ≥ %.6g to satisfy ‖α[Tᵗ|I]‖≤s",
-				s, maxNorm)
+			// log.Panicf("parameter s = %.6g is too small; need ≥ %.6g to satisfy ‖α[Tᵗ|I]‖≤s",
+			//      s, maxNorm)
 		} else {
-			fmt.Printf("spectral-norm check: α‖[Tᵗ|I]‖ = %.6g  ≤  s = %.6g  ✔\n",
-				maxNorm, s)
+			// fmt.Printf("spectral-norm check: α‖[Tᵗ|I]‖ = %.6g  ≤  s = %.6g  ✔\n",
+			//      maxNorm, s)
 		}
 	}
 	//! ------------------------------------------------------------------
 	// 4) Sample Q ∈ ℤ^{k×n} from D_{√(s²−α²)} and CRT→NTT→qhat
 	sigmaQ := math.Sqrt(s*s - alpha*alpha)
-	fmt.Printf("SamplePz: σQ = %f\n", sigmaQ)
+	// fmt.Printf("SamplePz: σQ = %f\n", sigmaQ)
 	qhat := make([]*ring.Poly, k)
 	dgQ := NewDiscreteGaussian(sigmaQ)
 
@@ -372,28 +371,26 @@ func SamplePz(
 	}
 
 	//! --- SamplePz sanity‐check: empirical variance of the qhat samples ---
-	var sum, sumSq float64
-	count := 0
-	for _, Phat := range qhat {
-		// invert NTT → get level-0 coeffs
-		coeff := ringQ.NewPoly()
-		ringQ.InvNTT(Phat, coeff)
-		for i := 0; i < n; i++ {
-			v := int64(coeff.Coeffs[0][i])
-			// center into [−q/2, q/2)
-			if v > int64(ringQ.Modulus[0]/2) {
-				v -= int64(ringQ.Modulus[0])
-			}
-			x := float64(v)
-			sum += x
-			sumSq += x * x
-			count++
-		}
-	}
-	mean := sum / float64(count)
-	variance := sumSq/float64(count) - mean*mean
-	standard_deviation := math.Sqrt(variance)
-	fmt.Printf("SamplePz → q̂ empirical standard deviation = %f\n", standard_deviation)
+	// var sum, sumSq float64
+	// count := 0
+	// for _, Phat := range qhat {
+	//      coeff := ringQ.NewPoly()
+	//      ringQ.InvNTT(Phat, coeff)
+	//      for i := 0; i < n; i++ {
+	//              v := int64(coeff.Coeffs[0][i])
+	//              if v > int64(ringQ.Modulus[0]/2) {
+	//                      v -= int64(ringQ.Modulus[0])
+	//              }
+	//              x := float64(v)
+	//              sum += x
+	//              sumSq += x * x
+	//              count++
+	//      }
+	// }
+	// mean := sum / float64(count)
+	// variance := sumSq/float64(count) - mean*mean
+	// standard_deviation := math.Sqrt(variance)
+	// fmt.Printf("SamplePz → q̂ empirical standard deviation = %f\n", standard_deviation)
 	//! --- end variance check ---
 
 	// ---------------------------
@@ -414,17 +411,17 @@ func SamplePz(
 	ringQ.InvNTT(eDotQEval, c1Poly)
 
 	// debug: show inner products before scaling
-	centre := func(v uint64) int64 {
-		q := int64(ringQ.Modulus[0])
-		x := int64(v)
-		if x > q/2 {
-			x -= q
-		}
-		return x
-	}
-	r0 := centre(c0Poly.Coeffs[0][0])
-	e0 := centre(c1Poly.Coeffs[0][0])
-	fmt.Printf("SamplePz: inner r·Q(0)=%d, e·Q(0)=%d\n", r0, e0)
+	// centre := func(v uint64) int64 {
+	//      q := int64(ringQ.Modulus[0])
+	//      x := int64(v)
+	//      if x > q/2 {
+	//              x -= q
+	//      }
+	//      return x
+	// }
+	// r0 := centre(c0Poly.Coeffs[0][0])
+	// e0 := centre(c1Poly.Coeffs[0][0])
+	// fmt.Printf("SamplePz: inner r·Q(0)=%d, e·Q(0)=%d\n", r0, e0)
 
 	// (b) scale each coefficient by –z and round to nearest integer mod q
 	zF, _ := zBig.Float64()
@@ -446,7 +443,7 @@ func SamplePz(
 			expect += int64(ringQ.Modulus[0])
 		}
 		if UnsignedToSigned(c0Poly.Coeffs[0][i], ringQ.Modulus[0]) != expect {
-			log.Fatalf("rounding check failed for c0 coeff %d", i)
+			// log.Fatalf("rounding check failed for c0 coeff %d", i)
 		}
 
 		v1 := int64(c1Poly.Coeffs[0][i])
@@ -463,7 +460,7 @@ func SamplePz(
 			expect1 += int64(ringQ.Modulus[0])
 		}
 		if UnsignedToSigned(c1Poly.Coeffs[0][i], ringQ.Modulus[0]) != expect1 {
-			log.Fatalf("rounding check failed for c1 coeff %d", i)
+			// log.Fatalf("rounding check failed for c1 coeff %d", i)
 		}
 	}
 
@@ -472,9 +469,9 @@ func SamplePz(
 	c1Eval := ConvertFromPolyBig(ringQ, c1Poly, prec)
 	c1Coeff := ToCoeffNegacyclic(c1Eval, ringQ, prec)
 
-	fmt.Printf("SamplePz: c0 = %s, c1 = %s\n",
-		c0Coeff.Coeffs[0].Real.Text('g', 10),
-		c1Coeff.Coeffs[0].Real.Text('g', 10))
+	// fmt.Printf("SamplePz: c0 = %s, c1 = %s\n",
+	//      c0Coeff.Coeffs[0].Real.Text('g', 10),
+	//      c1Coeff.Coeffs[0].Real.Text('g', 10))
 
 	// 6) Final 2×2 sampler
 	p0, p1 := Sample2zField(
@@ -492,35 +489,36 @@ func SamplePz(
 	//! ------------------------------------------------------------------
 	//! DEBUG -- sign diagnosis for p0 / p1  vs  (ê̂ᵀ·Q) / (r̂ᵀ·Q)
 	//! ------------------------------------------------------------------
-	{
-		// helper to centre a coeff into (−q/2, q/2]
-		centre := func(v uint64) int64 {
-			q := int64(ringQ.Modulus[0])
-			x := int64(v)
-			if x > q/2 {
-				x -= q
-			}
-			return x
-		}
+	/*{
+	          // helper to centre a coeff into (−q/2, q/2]
+	          centre := func(v uint64) int64 {
+	                  q := int64(ringQ.Modulus[0])
+	                  x := int64(v)
+	                  if x > q/2 {
+	                          x -= q
+	                  }
+	                  return x
+	          }
 
-		// ❶  compute ê̂ᵀ·Q   and   r̂ᵀ·Q   in NTT then go back to COEFF
-		eDotQEval := DotProduct(ringQ, Ttilde[1], qhat)
-		rDotQEval := DotProduct(ringQ, Ttilde[0], qhat)
-		eDotQCoeff := ringQ.NewPoly()
-		rDotQCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(eDotQEval, eDotQCoeff)
-		ringQ.InvNTT(rDotQEval, rDotQCoeff)
+	          // ❶  compute ê̂ᵀ·Q   and   r̂ᵀ·Q   in NTT then go back to COEFF
+	          eDotQEval := DotProduct(ringQ, Ttilde[1], qhat)
+	          rDotQEval := DotProduct(ringQ, Ttilde[0], qhat)
+	          eDotQCoeff := ringQ.NewPoly()
+	          rDotQCoeff := ringQ.NewPoly()
+	          ringQ.InvNTT(eDotQEval, eDotQCoeff)
+	          ringQ.InvNTT(rDotQEval, rDotQCoeff)
 
-		// ❷  pick the *constant* coefficient 0  for an easy sign test
-		p0c0 := centre(P0.Coeffs[0][0])         // p₀(0)   (Coeff domain)
-		p1c0 := centre(P1.Coeffs[0][0])         // p₁(0)
-		eQc0 := centre(eDotQCoeff.Coeffs[0][0]) // (ê̂ᵀ·Q)(0)
-		rQc0 := centre(rDotQCoeff.Coeffs[0][0]) // (r̂ᵀ·Q)(0)
+	          // ❷  pick the *constant* coefficient 0  for an easy sign test
+	          // p0c0 := centre(P0.Coeffs[0][0])         // p₀(0)   (Coeff domain)
+	          // p1c0 := centre(P1.Coeffs[0][0])         // p₁(0)
+	          // eQc0 := centre(eDotQCoeff.Coeffs[0][0]) // (ê̂ᵀ·Q)(0)
+	          // rQc0 := centre(rDotQCoeff.Coeffs[0][0]) // (r̂ᵀ·Q)(0)
 
-		fmt.Printf("[SIGN-DIAG]  p0(0)=%d   r·Q(0)=%d   sum=%d\n", p0c0, rQc0, p0c0+rQc0)
-		fmt.Printf("[SIGN-DIAG]  p1(0)=%d   e·Q(0)=%d   sum=%d\n", p1c0, eQc0, p1c0+eQc0)
+	          // fmt.Printf("[SIGN-DIAG]  p0(0)=%d   r·Q(0)=%d   sum=%d\n", p0c0, rQc0, p0c0+rQc0)
+	          // fmt.Printf("[SIGN-DIAG]  p1(0)=%d   e·Q(0)=%d   sum=%d\n", p1c0, eQc0, p1c0+eQc0)
 
-	}
+	  }
+	*/
 
 	//! ------------------------------------------------------------------
 

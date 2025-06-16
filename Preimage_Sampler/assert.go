@@ -11,4 +11,4 @@ func assert(cond bool, msg string, args ...any) {
 	}
 }
 
-const samplerDebug = true
+const samplerDebug = false
