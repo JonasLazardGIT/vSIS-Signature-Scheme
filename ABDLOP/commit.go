@@ -1,6 +1,7 @@
 package ABDLOP
 
 import (
+	"fmt"
 	"math"
 
 	ps "vSIS-Signature/Preimage_Sampler"
@@ -25,7 +26,7 @@ type PublicKey struct {
 	A1     [][]*ring.Poly
 	A2     [][]*ring.Poly
 	B      [][]*ring.Poly
-	b      []*ring.Poly
+	Bvec   []*ring.Poly
 }
 
 type Commitment struct {
@@ -89,7 +90,7 @@ func KeyGen(p Params) *PublicKey {
 		bvec[i] = poly
 	}
 
-	return &PublicKey{Ring: ringQ, Params: p, A1: A1, A2: A2, B: B, b: bvec}
+	return &PublicKey{Ring: ringQ, Params: p, A1: A1, A2: A2, B: B, Bvec: bvec}
 }
 
 func sampleGaussianVector(ringQ *ring.Ring, dim int, stddev float64) []*ring.Poly {
@@ -104,7 +105,6 @@ func sampleGaussianVector(ringQ *ring.Ring, dim int, stddev float64) []*ring.Pol
 				poly.Coeffs[lvl][i] = uint64((x%mod + mod) % mod)
 			}
 		}
-		ringQ.NTT(poly, poly)
 		out[j] = poly
 	}
 	return out
@@ -114,16 +114,28 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 	ringQ := pk.Ring
 	s2 := sampleGaussianVector(ringQ, pk.Params.M2, pk.Params.Beta2)
 
+	// switch secrets to NTT domain
+	s1NTT := make([]*ring.Poly, len(s1))
+	for i, p := range s1 {
+		s1NTT[i] = ringQ.NewPoly()
+		ringQ.NTT(p, s1NTT[i])
+	}
+	s2NTT := make([]*ring.Poly, len(s2))
+	for i, p := range s2 {
+		s2NTT[i] = ringQ.NewPoly()
+		ringQ.NTT(p, s2NTT[i])
+	}
+
 	tA := make([]*ring.Poly, pk.Params.N)
 	tmp := ringQ.NewPoly()
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M1; j++ {
-			ringQ.MulCoeffs(pk.A1[i][j], s1[j], tmp)
+			ringQ.MulCoeffs(pk.A1[i][j], s1NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		for j := 0; j < pk.Params.M2; j++ {
-			ringQ.MulCoeffs(pk.A2[i][j], s2[j], tmp)
+			ringQ.MulCoeffs(pk.A2[i][j], s2NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		tA[i] = acc
@@ -133,7 +145,7 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M2; j++ {
-			ringQ.MulCoeffs(pk.B[i][j], s2[j], tmp)
+			ringQ.MulCoeffs(pk.B[i][j], s2NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		mNTT := ringQ.NewPoly()
@@ -144,12 +156,12 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 
 	tag := ringQ.NewPoly()
 	for j := 0; j < pk.Params.M2; j++ {
-		ringQ.MulCoeffs(pk.b[j], s2[j], tmp)
+		ringQ.MulCoeffs(pk.Bvec[j], s2NTT[j], tmp)
 		ringQ.Add(tag, tmp, tag)
 	}
 
 	com := &Commitment{TA: tA, TB: tB, T: tag}
-	open := &Opening{S1: s1, S2: s2, M: m}
+	open := &Opening{S1: s1NTT, S2: s2NTT, M: m}
 	return com, open
 }
 
@@ -161,18 +173,32 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 		panic("CommitWithRand: wrong s2 length")
 	}
 
+	fmt.Printf("CommitWithRand: s1=%d s2=%d\n", len(s1), len(s2))
+
 	ringQ := pk.Ring
+
+	// convert secrets to NTT domain
+	s1NTT := make([]*ring.Poly, len(s1))
+	for i, p := range s1 {
+		s1NTT[i] = ringQ.NewPoly()
+		ringQ.NTT(p, s1NTT[i])
+	}
+	s2NTT := make([]*ring.Poly, len(s2))
+	for i, p := range s2 {
+		s2NTT[i] = ringQ.NewPoly()
+		ringQ.NTT(p, s2NTT[i])
+	}
 
 	tA := make([]*ring.Poly, pk.Params.N)
 	tmp := ringQ.NewPoly()
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M1; j++ {
-			ringQ.MulCoeffs(pk.A1[i][j], s1[j], tmp)
+			ringQ.MulCoeffs(pk.A1[i][j], s1NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		for j := 0; j < pk.Params.M2; j++ {
-			ringQ.MulCoeffs(pk.A2[i][j], s2[j], tmp)
+			ringQ.MulCoeffs(pk.A2[i][j], s2NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		tA[i] = acc
@@ -182,7 +208,7 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M2; j++ {
-			ringQ.MulCoeffs(pk.B[i][j], s2[j], tmp)
+			ringQ.MulCoeffs(pk.B[i][j], s2NTT[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
 		mNTT := ringQ.NewPoly()
@@ -193,16 +219,17 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 
 	tag := ringQ.NewPoly()
 	for j := 0; j < pk.Params.M2; j++ {
-		ringQ.MulCoeffs(pk.b[j], s2[j], tmp)
+		ringQ.MulCoeffs(pk.Bvec[j], s2NTT[j], tmp)
 		ringQ.Add(tag, tmp, tag)
 	}
 
 	com := &Commitment{TA: tA, TB: tB, T: tag}
-	open := &Opening{S1: s1, S2: s2, M: m}
+	open := &Opening{S1: s1NTT, S2: s2NTT, M: m}
+	fmt.Println("CommitWithRand: finished")
 	return com, open, tag
 }
 
-func polyNormInf(r *ring.Ring, p *ring.Poly, q uint64) int64 {
+func PolyNormInf(r *ring.Ring, p *ring.Poly, q uint64) int64 {
 	coeff := r.NewPoly()
 	r.InvNTT(p, coeff)
 	var max int64
@@ -225,12 +252,12 @@ func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 	bound2 := pk.Params.Beta2 * math.Sqrt(float64(pk.Params.D))
 
 	for _, p := range op.S1 {
-		if float64(polyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
+		if float64(PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
 			return false
 		}
 	}
 	for _, p := range op.S2 {
-		if float64(polyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
+		if float64(PolyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
 			return false
 		}
 	}
@@ -268,7 +295,7 @@ func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 
 	tag := ringQ.NewPoly()
 	for j := 0; j < pk.Params.M2; j++ {
-		ringQ.MulCoeffs(pk.b[j], op.S2[j], tmp)
+		ringQ.MulCoeffs(pk.Bvec[j], op.S2[j], tmp)
 		ringQ.Add(tag, tmp, tag)
 	}
 	if !ringQ.Equal(tag, com.T) {
