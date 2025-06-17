@@ -1,6 +1,8 @@
 package ABDLOP
 
 import (
+	"math"
+
 	ps "vSIS-Signature/Preimage_Sampler"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -28,7 +30,8 @@ type PublicKey struct {
 
 type Commitment struct {
 	TA []*ring.Poly
-	TB [][]int64
+	TB []*ring.Poly
+	T  *ring.Poly
 }
 
 type Opening struct {
@@ -78,8 +81,8 @@ func KeyGen(p Params) *PublicKey {
 		}
 	}
 
-	bvec := make([]*ring.Poly, p.N)
-	for i := 0; i < p.N; i++ {
+	bvec := make([]*ring.Poly, p.M2)
+	for i := 0; i < p.M2; i++ {
 		poly := ringQ.NewPoly()
 		uni.Read(poly)
 		ringQ.NTT(poly, poly)
@@ -126,24 +129,26 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 		tA[i] = acc
 	}
 
-	tB := make([][]int64, pk.Params.N)
+	tB := make([]*ring.Poly, pk.Params.N)
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M2; j++ {
 			ringQ.MulCoeffs(pk.B[i][j], s2[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
-		ringQ.InvNTT(acc, acc)
-		coeffs := make([]int64, ringQ.N)
-		for k := 0; k < ringQ.N; k++ {
-			val := ps.UnsignedToSigned(acc.Coeffs[0][k], pk.Params.Q)
-			val += ps.UnsignedToSigned(m[i].Coeffs[0][k], pk.Params.Q)
-			coeffs[k] = val
-		}
-		tB[i] = coeffs
+		mNTT := ringQ.NewPoly()
+		ringQ.NTT(m[i], mNTT)
+		ringQ.Add(acc, mNTT, acc)
+		tB[i] = acc
 	}
 
-	com := &Commitment{TA: tA, TB: tB}
+	tag := ringQ.NewPoly()
+	for j := 0; j < pk.Params.M2; j++ {
+		ringQ.MulCoeffs(pk.b[j], s2[j], tmp)
+		ringQ.Add(tag, tmp, tag)
+	}
+
+	com := &Commitment{TA: tA, TB: tB, T: tag}
 	open := &Opening{S1: s1, S2: s2, M: m}
 	return com, open
 }
@@ -167,8 +172,8 @@ func polyNormInf(r *ring.Ring, p *ring.Poly, q uint64) int64 {
 func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 	ringQ := pk.Ring
 
-	bound1 := 6 * pk.Params.Beta1
-	bound2 := 6 * pk.Params.Beta2
+	bound1 := pk.Params.Beta1 * math.Sqrt(float64(pk.Params.D))
+	bound2 := pk.Params.Beta2 * math.Sqrt(float64(pk.Params.D))
 
 	for _, p := range op.S1 {
 		if float64(polyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
@@ -204,14 +209,22 @@ func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 			ringQ.MulCoeffs(pk.B[i][j], op.S2[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
-		ringQ.InvNTT(acc, acc)
-		for k := 0; k < ringQ.N; k++ {
-			val := ps.UnsignedToSigned(acc.Coeffs[0][k], pk.Params.Q)
-			val += ps.UnsignedToSigned(op.M[i].Coeffs[0][k], pk.Params.Q)
-			if val != com.TB[i][k] {
-				return false
-			}
+		mNTT := ringQ.NewPoly()
+		ringQ.NTT(op.M[i], mNTT)
+		ringQ.Add(acc, mNTT, acc)
+		if !ringQ.Equal(acc, com.TB[i]) {
+			return false
 		}
 	}
+
+	tag := ringQ.NewPoly()
+	for j := 0; j < pk.Params.M2; j++ {
+		ringQ.MulCoeffs(pk.b[j], op.S2[j], tmp)
+		ringQ.Add(tag, tmp, tag)
+	}
+	if !ringQ.Equal(tag, com.T) {
+		return false
+	}
+
 	return true
 }

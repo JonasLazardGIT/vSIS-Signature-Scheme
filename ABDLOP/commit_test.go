@@ -22,6 +22,9 @@ func TestCommitOpen(t *testing.T) {
 	}
 
 	com, open := Commit(pk, s1, m)
+	if com.T == nil {
+		t.Fatalf("commitment tag is nil")
+	}
 	if !Open(pk, com, open) {
 		t.Fatalf("open failed on valid commitment")
 	}
@@ -48,7 +51,7 @@ func TestOpenBoundFail(t *testing.T) {
 		coeff := pk.Ring.NewPoly()
 		pk.Ring.InvNTT(poly, coeff)
 		if i == 0 {
-			coeff.Coeffs[0][0] = uint64(p.Q - 1)
+			coeff.Coeffs[0][0] = 5
 		}
 		pk.Ring.NTT(coeff, coeff)
 		bad.S2[i] = coeff
