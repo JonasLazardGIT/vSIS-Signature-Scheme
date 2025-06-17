@@ -3,6 +3,7 @@ package zkproof
 import (
 	"fmt"
 	"math"
+	"math/big"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 
@@ -81,7 +82,12 @@ func Verify(pk *abd.PublicKey, gate *QuadraticGate, com *abd.Commitment, transcr
 		ringQ.Add(f, tmp, f)
 		if c*c != 0 {
 			tmp0 := ringQ.NewPoly()
-			ringQ.MulScalar(gate.R0, uint64(c*c), tmp0)
+			tmpLevel := ringQ.NewPoly()
+			scalar := new(big.Int).SetUint64(uint64(c * c))
+			for lvl := range ringQ.Modulus {
+				ringQ.MulScalarBigintLvl(lvl, gate.R0, scalar, tmpLevel)
+				copy(tmp0.Coeffs[lvl], tmpLevel.Coeffs[lvl])
+			}
 			ringQ.Add(f, tmp0, f)
 		}
 	}

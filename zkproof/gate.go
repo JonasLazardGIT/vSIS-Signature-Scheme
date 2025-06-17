@@ -69,7 +69,7 @@ func BuildQuadraticGate(ringQ *ring.Ring, b1 []*ring.Poly, A [][]*ring.Poly, B0 
 		if j == 0 {
 			delta0 = acc
 		} else {
-			deltaU[j-1] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
+			deltaU[j-1] = ringQ.NewPoly()
 			ring.Copy(acc, deltaU[j-1])
 		}
 	}
@@ -86,15 +86,15 @@ func BuildQuadraticGate(ringQ *ring.Ring, b1 []*ring.Poly, A [][]*ring.Poly, B0 
 	// set R2[j][L] and R2[L][j]
 	for j := 0; j < m; j++ {
 		tmp := ringQ.NewPoly()
+		tmpJ := ringQ.NewPoly()
 		for lvl, qi := range ringQ.Modulus {
 			half := new(big.Int).SetUint64((qi + 1) >> 1)
 			ringQ.MulScalarBigintLvl(lvl, gamma[j], half, tmp)
+			copy(tmpJ.Coeffs[lvl], tmp.Coeffs[lvl])
 		}
-		ringQ.Neg(tmp, tmp)
-		R2[j][L] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
-		ring.Copy(tmp, R2[j][L])
-		R2[L][j] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
-		ring.Copy(tmp, R2[L][j])
+		ringQ.Neg(tmpJ, tmpJ)
+		R2[j][L] = tmpJ
+		R2[L][j] = tmpJ
 	}
 
 	// r1 = α ‖ (-δU) ‖ 0

@@ -142,6 +142,7 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 	}
 
 	tB := make([]*ring.Poly, pk.Params.N)
+	mNTTOut := make([]*ring.Poly, len(m))
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M2; j++ {
@@ -152,6 +153,7 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 		ringQ.NTT(m[i], mNTT)
 		ringQ.Add(acc, mNTT, acc)
 		tB[i] = acc
+		mNTTOut[i] = mNTT
 	}
 
 	tag := ringQ.NewPoly()
@@ -161,7 +163,7 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 	}
 
 	com := &Commitment{TA: tA, TB: tB, T: tag}
-	open := &Opening{S1: s1NTT, S2: s2NTT, M: m}
+	open := &Opening{S1: s1NTT, S2: s2NTT, M: mNTTOut}
 	return com, open
 }
 
@@ -205,6 +207,7 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 	}
 
 	tB := make([]*ring.Poly, pk.Params.N)
+	mNTTOut := make([]*ring.Poly, len(m))
 	for i := 0; i < pk.Params.N; i++ {
 		acc := ringQ.NewPoly()
 		for j := 0; j < pk.Params.M2; j++ {
@@ -215,6 +218,7 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 		ringQ.NTT(m[i], mNTT)
 		ringQ.Add(acc, mNTT, acc)
 		tB[i] = acc
+		mNTTOut[i] = mNTT
 	}
 
 	tag := ringQ.NewPoly()
@@ -224,7 +228,7 @@ func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commit
 	}
 
 	com := &Commitment{TA: tA, TB: tB, T: tag}
-	open := &Opening{S1: s1NTT, S2: s2NTT, M: m}
+	open := &Opening{S1: s1NTT, S2: s2NTT, M: mNTTOut}
 	fmt.Println("CommitWithRand: finished")
 	return com, open, tag
 }
@@ -248,8 +252,8 @@ func PolyNormInf(r *ring.Ring, p *ring.Poly, q uint64) int64 {
 func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 	ringQ := pk.Ring
 
-	bound1 := pk.Params.Beta1 * math.Sqrt(float64(pk.Params.D))
-	bound2 := pk.Params.Beta2 * math.Sqrt(float64(pk.Params.D))
+	bound1 := pk.Params.Beta1 * math.Sqrt(float64(pk.Params.D)*2)
+	bound2 := pk.Params.Beta2 * math.Sqrt(float64(pk.Params.D)*2)
 
 	for _, p := range op.S1 {
 		if float64(PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
@@ -285,9 +289,7 @@ func Open(pk *PublicKey, com *Commitment, op *Opening) bool {
 			ringQ.MulCoeffs(pk.B[i][j], op.S2[j], tmp)
 			ringQ.Add(acc, tmp, acc)
 		}
-		mNTT := ringQ.NewPoly()
-		ringQ.NTT(op.M[i], mNTT)
-		ringQ.Add(acc, mNTT, acc)
+		ringQ.Add(acc, op.M[i], acc)
 		if !ringQ.Equal(acc, com.TB[i]) {
 			return false
 		}

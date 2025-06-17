@@ -2,6 +2,7 @@ package zkproof
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 
 	abd "vSIS-Signature/ABDLOP"
@@ -133,82 +134,122 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 	s1 := append(append(witness.S, witness.U...), witness.X0...)
 	mPoly := witness.X1
 
-	// 2. masks
-	y1 := sampleGaussianVector(ringQ, len(s1), pk.Params.Beta1)
-	y2Vec := sampleGaussianVector(ringQ, pk.Params.M2, pk.Params.Beta2)
-	y1NTT := makeNTTslice(ringQ, y1)
-	y2NTT := makeNTTslice(ringQ, y2Vec)
+	var (
+		y1NTT []*ring.Poly
+		y2NTT []*ring.Poly
+		s1NTT []*ring.Poly
+		s2NTT []*ring.Poly
+		com   *abd.Commitment
+		open  *abd.Opening
+		v     *ring.Poly
+		t     *ring.Poly
+		w     []*ring.Poly
+		z1    []*ring.Poly
+		z2    []*ring.Poly
+		c     int
+	)
 
-	// 3. commit using real witness s2
-	com, open, _ := abd.CommitWithRand(pk, s1, witness.S2, mPoly)
-	s1NTT := open.S1
-	s2NTT := open.S2
+	bound1 := pk.Params.Beta1 * math.Sqrt(float64(pk.Params.D*2))
+	bound2 := pk.Params.Beta2 * math.Sqrt(float64(pk.Params.D*2))
 
-	// compute w = A1*y1 + A2*y2
-	part1 := matVecMul(pk.A1, y1NTT, ringQ)
-	part2 := matVecMul(pk.A2, y2NTT, ringQ)
-	w := make([]*ring.Poly, len(part1))
-	for i := 0; i < len(part1); i++ {
-		w[i] = ringQ.NewPoly()
-		ringQ.Add(part1[i], part2[i], w[i])
-	}
+	for {
+		// 2. masks
+		y1 := sampleGaussianVector(ringQ, len(s1), pk.Params.Beta1)
+		y2Vec := sampleGaussianVector(ringQ, pk.Params.M2, pk.Params.Beta2)
+		y1NTT = makeNTTslice(ringQ, y1)
+		y2NTT = makeNTTslice(ringQ, y2Vec)
 
-	// 4. automorphisms (only i=0 supported)
-	yLeft := applyAutoNTT(y1NTT, 0, ringQ)
-	by2 := matVecMul(pk.B, y2NTT, ringQ)
-	yRight := negateSlice(applyAutoNTT(by2, 0, ringQ), ringQ)
-	y := append(yLeft, yRight...)
+		// 3. commit using real witness s2
+		com, open, _ = abd.CommitWithRand(pk, s1, witness.S2, mPoly)
+		s1NTT = open.S1
+		s2NTT = open.S2
 
-	// helper vector s = s1||s2
-	sVec := append(s1NTT, s2NTT...)
-
-	// 5. scalars
-	g1 := innerProd(sVec, matVecMul(gate.R2, y, ringQ), ringQ)
-	ringQ.Add(g1, innerProd(y, matVecMul(gate.R2, sVec, ringQ), ringQ), g1)
-	ringQ.Add(g1, innerProd(gate.R1, y, ringQ), g1)
-
-	t := ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
-	ring.Copy(com.T, t)
-	ringQ.Add(t, g1, t)
-
-	v := innerProd(y, matVecMul(gate.R2, y, ringQ), ringQ)
-	ringQ.Add(v, innerProd(pk.Bvec, y2NTT, ringQ), v)
-
-	// 6. send first msg - compute challenge
-	c := rand.Intn(3) - 1
-
-	// 7. response
-	z1 := make([]*ring.Poly, len(s1NTT))
-	for i := range z1 {
-		switch c {
-		case 1:
-			z1[i] = ringQ.NewPoly()
-			ringQ.Add(s1NTT[i], y1NTT[i], z1[i])
-		case -1:
-			tmp := ringQ.NewPoly()
-			ringQ.Neg(s1NTT[i], tmp)
-			z1[i] = ringQ.NewPoly()
-			ringQ.Add(tmp, y1NTT[i], z1[i])
-		default:
-			z1[i] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
-			ring.Copy(y1NTT[i], z1[i])
+		// compute w = A1*y1 + A2*y2
+		part1 := matVecMul(pk.A1, y1NTT, ringQ)
+		part2 := matVecMul(pk.A2, y2NTT, ringQ)
+		w := make([]*ring.Poly, len(part1))
+		for i := 0; i < len(part1); i++ {
+			w[i] = ringQ.NewPoly()
+			ringQ.Add(part1[i], part2[i], w[i])
 		}
-	}
 
-	z2 := make([]*ring.Poly, len(s2NTT))
-	for i := range z2 {
-		switch c {
-		case 1:
-			z2[i] = ringQ.NewPoly()
-			ringQ.Add(s2NTT[i], y2NTT[i], z2[i])
-		case -1:
-			tmp := ringQ.NewPoly()
-			ringQ.Neg(s2NTT[i], tmp)
-			z2[i] = ringQ.NewPoly()
-			ringQ.Add(tmp, y2NTT[i], z2[i])
-		default:
-			z2[i] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
-			ring.Copy(y2NTT[i], z2[i])
+		// 4. automorphisms (only i=0 supported)
+		yLeft := applyAutoNTT(y1NTT, 0, ringQ)
+		by2 := matVecMul(pk.B, y2NTT, ringQ)
+		yRight := negateSlice(applyAutoNTT(by2, 0, ringQ), ringQ)
+		y := append(yLeft, yRight...)
+
+		// helper vector s = s1||s2
+		sVec := append(s1NTT, s2NTT...)
+
+		// 5. scalars
+		g1 := innerProd(sVec, matVecMul(gate.R2, y, ringQ), ringQ)
+		ringQ.Add(g1, innerProd(y, matVecMul(gate.R2, sVec, ringQ), ringQ), g1)
+		ringQ.Add(g1, innerProd(gate.R1, y, ringQ), g1)
+
+		t := ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
+		ring.Copy(com.T, t)
+		ringQ.Add(t, g1, t)
+
+		v := innerProd(y, matVecMul(gate.R2, y, ringQ), ringQ)
+		ringQ.Add(v, innerProd(pk.Bvec, y2NTT, ringQ), v)
+
+		// 6. send first msg - compute challenge
+		c = rand.Intn(3) - 1
+
+		// 7. response
+		z1 = make([]*ring.Poly, len(s1NTT))
+		for i := range z1 {
+			switch c {
+			case 1:
+				z1[i] = ringQ.NewPoly()
+				ringQ.Add(s1NTT[i], y1NTT[i], z1[i])
+			case -1:
+				tmp := ringQ.NewPoly()
+				ringQ.Neg(s1NTT[i], tmp)
+				z1[i] = ringQ.NewPoly()
+				ringQ.Add(tmp, y1NTT[i], z1[i])
+			default:
+				z1[i] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
+				ring.Copy(y1NTT[i], z1[i])
+			}
+		}
+
+		z2 = make([]*ring.Poly, len(s2NTT))
+		for i := range z2 {
+			switch c {
+			case 1:
+				z2[i] = ringQ.NewPoly()
+				ringQ.Add(s2NTT[i], y2NTT[i], z2[i])
+			case -1:
+				tmp := ringQ.NewPoly()
+				ringQ.Neg(s2NTT[i], tmp)
+				z2[i] = ringQ.NewPoly()
+				ringQ.Add(tmp, y2NTT[i], z2[i])
+			default:
+				z2[i] = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
+				ring.Copy(y2NTT[i], z2[i])
+			}
+		}
+
+		// rejection sampling
+		reject := false
+		for _, p := range z1 {
+			if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
+				reject = true
+				break
+			}
+		}
+		if !reject {
+			for _, p := range z2 {
+				if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
+					reject = true
+					break
+				}
+			}
+		}
+		if !reject {
+			break
 		}
 	}
 
