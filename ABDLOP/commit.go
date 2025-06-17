@@ -153,6 +153,55 @@ func Commit(pk *PublicKey, s1 []*ring.Poly, m []*ring.Poly) (*Commitment, *Openi
 	return com, open
 }
 
+// CommitWithRand is identical to Commit but uses the caller-provided s2
+// randomness. It additionally returns the commitment tag b^T·s2 in NTT form.
+// Panics if len(s2) != pk.Params.M2.
+func CommitWithRand(pk *PublicKey, s1, s2 []*ring.Poly, m []*ring.Poly) (*Commitment, *Opening, *ring.Poly) {
+	if len(s2) != pk.Params.M2 {
+		panic("CommitWithRand: wrong s2 length")
+	}
+
+	ringQ := pk.Ring
+
+	tA := make([]*ring.Poly, pk.Params.N)
+	tmp := ringQ.NewPoly()
+	for i := 0; i < pk.Params.N; i++ {
+		acc := ringQ.NewPoly()
+		for j := 0; j < pk.Params.M1; j++ {
+			ringQ.MulCoeffs(pk.A1[i][j], s1[j], tmp)
+			ringQ.Add(acc, tmp, acc)
+		}
+		for j := 0; j < pk.Params.M2; j++ {
+			ringQ.MulCoeffs(pk.A2[i][j], s2[j], tmp)
+			ringQ.Add(acc, tmp, acc)
+		}
+		tA[i] = acc
+	}
+
+	tB := make([]*ring.Poly, pk.Params.N)
+	for i := 0; i < pk.Params.N; i++ {
+		acc := ringQ.NewPoly()
+		for j := 0; j < pk.Params.M2; j++ {
+			ringQ.MulCoeffs(pk.B[i][j], s2[j], tmp)
+			ringQ.Add(acc, tmp, acc)
+		}
+		mNTT := ringQ.NewPoly()
+		ringQ.NTT(m[i], mNTT)
+		ringQ.Add(acc, mNTT, acc)
+		tB[i] = acc
+	}
+
+	tag := ringQ.NewPoly()
+	for j := 0; j < pk.Params.M2; j++ {
+		ringQ.MulCoeffs(pk.b[j], s2[j], tmp)
+		ringQ.Add(tag, tmp, tag)
+	}
+
+	com := &Commitment{TA: tA, TB: tB, T: tag}
+	open := &Opening{S1: s1, S2: s2, M: m}
+	return com, open, tag
+}
+
 func polyNormInf(r *ring.Ring, p *ring.Poly, q uint64) int64 {
 	coeff := r.NewPoly()
 	r.InvNTT(p, coeff)
