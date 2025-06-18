@@ -23,12 +23,13 @@ type Witness struct {
 
 // Transcript captures a single execution of the Σ-protocol.
 type Transcript struct {
-	W  []*ring.Poly
-	T  *ring.Poly
-	V  *ring.Poly
-	Z1 []*ring.Poly
-	Z2 []*ring.Poly
-	C  int
+	W   []*ring.Poly
+	T   *ring.Poly
+	V   *ring.Poly
+	Z1  []*ring.Poly
+	Z2  []*ring.Poly
+	C   int
+	Com *abd.Commitment
 }
 
 // sampleGaussianVector is a helper that samples dim polynomials from D_β.
@@ -274,5 +275,5 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 	}
 
 	fmt.Println("Prover: end")
-	return &Transcript{W: w, T: t, V: v, Z1: z1, Z2: z2, C: c}
+	return &Transcript{W: w, T: t, V: v, Z1: z1, Z2: z2, C: c, Com: com}
 }

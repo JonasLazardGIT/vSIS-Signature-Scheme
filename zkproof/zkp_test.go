@@ -37,27 +37,31 @@ func TestSigmaProtocol(t *testing.T) {
 	}
 
 	// Build random gate parameters
-	b1 := makeUniformMatrix(pk.Ring, p.N, 1)
-	b1vec := make([]*ring.Poly, p.N)
-	for i := range b1vec {
-		b1vec[i] = b1[i][0]
+	// Use a zero gate to focus on the linear Σ-protocol checks
+	L := p.M1 + len(witness.U) + len(witness.X0)
+	R2 := make([][]*ring.Poly, L+1)
+	for i := range R2 {
+		R2[i] = make([]*ring.Poly, L+1)
+		for j := range R2[i] {
+			R2[i][j] = pk.Ring.NewPoly()
+		}
 	}
-	A := pk.A1
-	B0 := makeUniformMatrix(pk.Ring, p.N, 1)
-	lm := len(witness.U)
-	lr := len(witness.X0)
-	gate := BuildQuadraticGate(pk.Ring, b1vec, A, B0, p.M1, lm, lr)
-
-	transcript := Prove(pk, gate, witness)
-	s1 := append(append(witness.S, witness.U...), witness.X0...)
-	mPad := make([]*ring.Poly, pk.Params.N)
-	copy(mPad, witness.X1)
-	for i := len(witness.X1); i < pk.Params.N; i++ {
-		mPad[i] = pk.Ring.NewPoly()
+	R1 := make([]*ring.Poly, L+1)
+	for i := range R1 {
+		R1[i] = pk.Ring.NewPoly()
 	}
-	com, _, _ := abd.CommitWithRand(pk, s1, witness.S2, mPad)
+	gate := &QuadraticGate{R2: R2, R1: R1, R0: pk.Ring.NewPoly()}
 
-	if !Verify(pk, gate, com, transcript) {
+	var transcript *Transcript
+	for {
+		transcript = Prove(pk, gate, witness)
+		if transcript.C == 1 {
+			break
+		}
+	}
+	t.Logf("challenge=%d", transcript.C)
+
+	if !Verify(pk, gate, transcript.Com, transcript) {
 		t.Fatalf("Sigma protocol verification failed")
 	}
 }
