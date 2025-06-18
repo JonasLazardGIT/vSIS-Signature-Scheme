@@ -55,6 +55,7 @@ func Verify(pk *abd.PublicKey, gate *QuadraticGate, com *abd.Commitment, transcr
 	}
 	for i := range left {
 		if !ringQ.Equal(left[i], right[i]) {
+			fmt.Println("Verifier: reject at leftA/rightA comparison")
 			return false
 		}
 	}
@@ -96,6 +97,7 @@ func Verify(pk *abd.PublicKey, gate *QuadraticGate, com *abd.Commitment, transcr
 	ringQ.Sub(f, bZ2, f)
 
 	if !ringQ.Equal(f, transcript.V) {
+		fmt.Println("Verifier: reject at final comparison")
 		return false
 	}
 	fmt.Println("Verifier: accept")

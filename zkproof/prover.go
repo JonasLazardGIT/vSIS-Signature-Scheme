@@ -205,11 +205,11 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		ringQ.Add(g1, innerProd(y, matVecMul(gate.R2, sVec, ringQ), ringQ), g1)
 		ringQ.Add(g1, innerProd(gate.R1, y, ringQ), g1)
 
-		t := ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
+		t = ring.NewPoly(ringQ.N, len(ringQ.Modulus)-1)
 		ring.Copy(com.T, t)
 		ringQ.Add(t, g1, t)
 
-		v := innerProd(y, matVecMul(gate.R2, y, ringQ), ringQ)
+		v = innerProd(y, matVecMul(gate.R2, y, ringQ), ringQ)
 		ringQ.Add(v, innerProd(pk.Bvec, y2NTT, ringQ), v)
 
 		// 6. send first msg - compute challenge
