@@ -114,7 +114,10 @@ func BuildQuadraticGate(ringQ *ring.Ring, b1 []*ring.Poly, A [][]*ring.Poly, B0 
 		r1[idx] = neg
 		idx++
 	}
-	r1[idx] = ringQ.NewPoly() // zero
+	for idx < L+1 {
+		r1[idx] = ringQ.NewPoly() // zero padding
+		idx++
+	}
 
 	// r0 = -δ0
 	r0 := ringQ.NewPoly()
