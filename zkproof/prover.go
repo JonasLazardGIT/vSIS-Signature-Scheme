@@ -255,6 +255,7 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		z2Coeff := makeInvNTTslice(ringQ, z2)
 		reject := false
 		for _, p := range z1Coeff {
+			fmt.Printf("Prover: checking norm : z1 %d < bound1 %f \n", abd.PolyNormInf(ringQ, p, pk.Params.Q), bound1)
 			if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
 				reject = true
 				break
@@ -262,6 +263,7 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		}
 		if !reject {
 			for _, p := range z2Coeff {
+				fmt.Printf("Prover: checking norm : z2 %d < bound2 %f \n", abd.PolyNormInf(ringQ, p, pk.Params.Q), bound2)
 				if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
 					reject = true
 					break
