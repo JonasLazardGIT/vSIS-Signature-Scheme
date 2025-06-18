@@ -251,10 +251,8 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		}
 
 		// rejection sampling
-		z1Coeff := makeInvNTTslice(ringQ, z1)
-		z2Coeff := makeInvNTTslice(ringQ, z2)
 		reject := false
-		for _, p := range z1Coeff {
+		for _, p := range z1 {
 			fmt.Printf("Prover: checking norm : z1 %d < bound1 %f \n", abd.PolyNormInf(ringQ, p, pk.Params.Q), bound1)
 			if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
 				reject = true
@@ -262,7 +260,7 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 			}
 		}
 		if !reject {
-			for _, p := range z2Coeff {
+			for _, p := range z2 {
 				fmt.Printf("Prover: checking norm : z2 %d < bound2 %f \n", abd.PolyNormInf(ringQ, p, pk.Params.Q), bound2)
 				if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
 					reject = true
