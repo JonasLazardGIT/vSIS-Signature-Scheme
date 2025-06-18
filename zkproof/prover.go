@@ -7,6 +7,7 @@ import (
 
 	abd "vSIS-Signature/ABDLOP"
 	ps "vSIS-Signature/Preimage_Sampler"
+	"vSIS-Signature/automorphism"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
@@ -108,8 +109,7 @@ func innerProd(a, b []*ring.Poly, r *ring.Ring) *ring.Poly {
 func applyAutoNTT(vec []*ring.Poly, k int, r *ring.Ring) []*ring.Poly {
 	out := make([]*ring.Poly, len(vec))
 	for i, p := range vec {
-		out[i] = r.NewPoly()
-		r.Shift(p, k, out[i])
+		out[i] = automorphism.ApplyNTT(r, p, 2*k+1)
 	}
 	return out
 }
@@ -146,7 +146,11 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 
 	// 1. witness split
 	s1 := append(append(witness.S, witness.U...), witness.X0...)
-	mPoly := witness.X1
+	mPoly := make([]*ring.Poly, pk.Params.N)
+	copy(mPoly, witness.X1)
+	for i := len(witness.X1); i < pk.Params.N; i++ {
+		mPoly[i] = ringQ.NewPoly()
+	}
 
 	var (
 		y1NTT []*ring.Poly
