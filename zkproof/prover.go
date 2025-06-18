@@ -61,6 +61,16 @@ func makeNTTslice(r *ring.Ring, in []*ring.Poly) []*ring.Poly {
 	return out
 }
 
+// makeInvNTTslice converts each polynomial of in with InvNTT and returns the new slice.
+func makeInvNTTslice(r *ring.Ring, in []*ring.Poly) []*ring.Poly {
+	out := make([]*ring.Poly, len(in))
+	for i, p := range in {
+		out[i] = r.NewPoly()
+		r.InvNTT(p, out[i])
+	}
+	return out
+}
+
 func toNTT(r *ring.Ring, p *ring.Poly) *ring.Poly {
 	out := r.NewPoly()
 	r.NTT(p, out)
@@ -84,7 +94,11 @@ func matVecMul(mat [][]*ring.Poly, vec []*ring.Poly, r *ring.Ring) []*ring.Poly 
 func innerProd(a, b []*ring.Poly, r *ring.Ring) *ring.Poly {
 	res := r.NewPoly()
 	tmp := r.NewPoly()
-	for i := 0; i < len(a); i++ {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
 		r.MulCoeffs(a[i], b[i], tmp)
 		r.Add(res, tmp, res)
 	}
@@ -167,7 +181,7 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		// compute w = A1*y1 + A2*y2
 		part1 := matVecMul(pk.A1, y1NTT, ringQ)
 		part2 := matVecMul(pk.A2, y2NTT, ringQ)
-		w := make([]*ring.Poly, len(part1))
+		w = make([]*ring.Poly, len(part1))
 		for i := 0; i < len(part1); i++ {
 			w[i] = ringQ.NewPoly()
 			ringQ.Add(part1[i], part2[i], w[i])
@@ -233,15 +247,17 @@ func Prove(pk *abd.PublicKey, gate *QuadraticGate, witness *Witness) *Transcript
 		}
 
 		// rejection sampling
+		z1Coeff := makeInvNTTslice(ringQ, z1)
+		z2Coeff := makeInvNTTslice(ringQ, z2)
 		reject := false
-		for _, p := range z1 {
+		for _, p := range z1Coeff {
 			if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound1 {
 				reject = true
 				break
 			}
 		}
 		if !reject {
-			for _, p := range z2 {
+			for _, p := range z2Coeff {
 				if float64(abd.PolyNormInf(ringQ, p, pk.Params.Q)) > bound2 {
 					reject = true
 					break

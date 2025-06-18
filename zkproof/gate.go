@@ -93,8 +93,12 @@ func BuildQuadraticGate(ringQ *ring.Ring, b1 []*ring.Poly, A [][]*ring.Poly, B0 
 			copy(tmpJ.Coeffs[lvl], tmp.Coeffs[lvl])
 		}
 		ringQ.Neg(tmpJ, tmpJ)
-		R2[j][L] = tmpJ
-		R2[L][j] = tmpJ
+		r2JL := ringQ.NewPoly()
+		ring.Copy(tmpJ, r2JL)
+		r2LJ := ringQ.NewPoly()
+		ring.Copy(tmpJ, r2LJ)
+		R2[j][L] = r2JL
+		R2[L][j] = r2LJ
 	}
 
 	// r1 = α ‖ (-δU) ‖ 0
