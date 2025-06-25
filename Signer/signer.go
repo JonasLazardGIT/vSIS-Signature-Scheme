@@ -75,8 +75,7 @@ func Sign() {
 	}
 
 	// 5) load B‐matrix from JSON and convert to CyclotomicFieldElem
-	const prec = 256
-	Bcyclo, err := loadBMatrix("Parameters/Bmatrix.json", ringQ, prec)
+	Bcyclo, err := loadBMatrix("Parameters/Bmatrix.json", ringQ)
 	if err != nil {
 		log.Fatalf("loadBMatrix: %v", err)
 	}
@@ -96,14 +95,11 @@ func Sign() {
 	x1Coeffs := append([]uint64(nil), x1Poly.Coeffs[0]...)
 
 	// 8) compute BBS‐syndrome in Eval domain
-	tEval, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mPoly, x0Poly, x1Poly, prec)
+	tNTT, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mPoly, x0Poly, x1Poly)
 	if err != nil {
 		log.Fatalf("ComputeBBSHash: %v", err)
 	}
-	tNTT, err := vsishash.ToPolyNTT(tEval, ringQ)
-	if err != nil {
-		log.Fatalf("ToPolyNTT: %v", err)
-	}
+
 	// extract target syndrome coefficients
 	tNTTCoeffs := append([]uint64(nil), tNTT.Coeffs[0]...)
 	fmt.Printf("Computed tNTT.Coeffs[0][:8]=%v\n", tNTTCoeffs[:8])
@@ -147,7 +143,12 @@ func LoadParams(path string) (*Parameters.SystemParams, error) {
 	return &p, nil
 }
 
-func loadBMatrix(path string, ringQ *ring.Ring, prec uint) ([]*ps.CyclotomicFieldElem, error) {
+// ----------------------------------------------------------------------------
+// loadBMatrix – now returns the four B-polynomials **already in NTT form**
+// ----------------------------------------------------------------------------
+func loadBMatrix(path string, ringQ *ring.Ring) ([]*ring.Poly, error) {
+
+	// --- read JSON -----------------------------------------------------------
 	type bjson struct {
 		B [][]uint64 `json:"B"`
 	}
@@ -156,19 +157,23 @@ func loadBMatrix(path string, ringQ *ring.Ring, prec uint) ([]*ps.CyclotomicFiel
 		return nil, err
 	}
 	var bj bjson
-	if err := json.Unmarshal(raw, &bj); err != nil {
+	if err = json.Unmarshal(raw, &bj); err != nil {
 		return nil, err
 	}
 	if len(bj.B) != 4 {
 		return nil, fmt.Errorf("expected 4 polys in B, got %d", len(bj.B))
 	}
-	Bcyclo := make([]*ps.CyclotomicFieldElem, 4)
-	for i := range bj.B {
+
+	// --- re-hydrate and lift to NTT ------------------------------------------
+	B := make([]*ring.Poly, 4)
+	for i := 0; i < 4; i++ {
 		p := ringQ.NewPoly()
-		copy(p.Coeffs[0], bj.B[i])
-		Bcyclo[i] = ps.ConvertFromPolyBig(ringQ, p, prec)
+		copy(p.Coeffs[0], bj.B[i]) // coefficients → poly (coeff. domain)
+		ringQ.NTT(p, p)            // single lift to evaluation / NTT domain
+		B[i] = p
 	}
-	return Bcyclo, nil
+
+	return B, nil
 }
 
 func savePublicKey(path string, ringQ *ring.Ring, trap *ps.Trapdoor) error {

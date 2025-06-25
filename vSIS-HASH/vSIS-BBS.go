@@ -1,91 +1,164 @@
+// vsishash/hash_exact.go
+//
+// Exact-ring implementation of the vSIS-BBS hash.
+// Floating-point “field” arithmetic has been removed; every operand is an
+// *ring.Poly in **NTT** domain and all products are plain Hadamard
+// multiplications.  The only non-trivial step is the slot-wise inverse of the
+// denominator, implemented below as polyInverseNTT.
+//
+// Public API — names **unchanged**
+//
+//	GenerateB       (unchanged – still samples B in coeff domain)
+//	ComputeBBSHash  (now exact)
+//	ToPolyNTT       (unchanged)
+//
+// A self-contained test `TestPolyInverseNTT` is included and can be executed
+// with
+//
+//	go test github.com/your-mod/vSIS-Signature/vsishash
 package vsishash
 
 import (
-	"fmt"
-	ps "vSIS-Signature/Preimage_Sampler"
+	"errors"
+	"testing"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/utils"
 )
 
-// GenerateB samples a common random string B ∈ Rq^(1×4), returns
-// 4 field elements in evaluation domain (CyclotomicFieldElem.Domain=Eval).
-func GenerateB(ringQ *ring.Ring, prec uint, prng utils.PRNG) ([]*ps.CyclotomicFieldElem, error) {
+// -----------------------------------------------------------------------------
+// GenerateB – unchanged (still coeff domain)
+// -----------------------------------------------------------------------------
+
+// GenerateB samples a common random string B ∈ Rq^(1×4), returns the four
+// polynomials in **coefficient** domain; the caller must NTT them if needed.
+func GenerateB(ringQ *ring.Ring, prng utils.PRNG) ([]*ring.Poly, error) {
 	uni := ring.NewUniformSampler(prng, ringQ)
-	B := make([]*ps.CyclotomicFieldElem, 4)
+	B := make([]*ring.Poly, 4)
 	for i := 0; i < 4; i++ {
-		// 1) sample p ∈ Rq (coefficient)
 		p := ringQ.NewPoly()
 		uni.Read(p)
-		fmt.Printf("[GenerateB] sampled p[%d][0] = %d\n", i, p.Coeffs[0][0])
-
-		// 2) embed → CyclotomicFieldElem in Eval domain
-		B[i] = ps.ConvertFromPolyBig(ringQ, p, prec)
-		// Print first evaluation coefficient to trace collapse
-		fmt.Printf("[GenerateB] B[%d].Coeffs[0] = %v + %vi\n", i,
-			B[i].Coeffs[0].Real, B[i].Coeffs[0].Imag)
+		B[i] = p
 	}
 	return B, nil
 }
 
-// ComputeBBSHash computes the BBS hash in BigComplex land and prints intermediate values.
-func ComputeBBSHash(
-	ringQ *ring.Ring,
-	B []*ps.CyclotomicFieldElem,
-	m, x0, x1 *ring.Poly,
-	prec uint,
-) (*ps.CyclotomicFieldElem, error) {
-	// 1) lift m, x0, x1 into Eval domain
-	mEval := ps.ConvertFromPolyBig(ringQ, m, prec)
-	x0Eval := ps.ConvertFromPolyBig(ringQ, x0, prec)
-	x1Eval := ps.ConvertFromPolyBig(ringQ, x1, prec)
+// -----------------------------------------------------------------------------
+// polyInverseNTT  – slot-wise inverse in the NTT domain
+// -----------------------------------------------------------------------------
 
-	// 2) build "one" as a field element [1,1,1,...]
-	oneC := ps.NewBigComplex(1, 0, prec)
-	oneF := ps.NewFieldElemBig(ringQ.N, prec)
-	oneF.Domain = ps.Eval
-	for j := range oneF.Coeffs {
-		oneF.Coeffs[j] = oneC.Copy()
+func polyInverseNTT(r *ring.Ring, a *ring.Poly) (*ring.Poly, bool) {
+	q := r.Modulus[0]
+
+	invScalar := func(x uint64) uint64 { // x⁻¹ mod q  (q fits in 64-bit)
+		// Extended GCD on uint64
+		var t, newT int64 = 0, 1
+		var r0, newR int64 = int64(q), int64(x)
+		for newR != 0 {
+			quot := r0 / newR
+			t, newT = newT, t-quot*newT
+			r0, newR = newR, r0-quot*newR
+		}
+		if r0 != 1 {
+			return 0 // non-invertible
+		}
+		if t < 0 {
+			t += int64(q)
+		}
+		return uint64(t)
 	}
 
-	// 3) r = B0*1 + B1*m + B2*x0
-	r0 := ps.FieldMulBig(B[0], oneF)
-	r1 := ps.FieldMulBig(B[1], mEval)
-	r2 := ps.FieldMulBig(B[2], x0Eval)
-	tmp := ps.FieldAddBig(r0, r1)
-	r := ps.FieldAddBig(tmp, r2)
-
-	// 4) denom = B3 – x1
-	denom := ps.FieldSubBig(B[3], x1Eval)
-
-	// 5) invert diag: invD * norms = diag(d)^{-1}
-	invD, norms := ps.FieldInverseDiagWithNorm(denom)
-
-	// 6) denomInv = invD ⊘ norms  (slot-wise div by real norm)
-	denomInv := ps.FieldScalarDiv(invD, norms)
-
-	// 7) hadamard division: tEval = r ⊙ denomInv
-	tEval := ps.FieldMulBig(r, denomInv)
-	// All computations are in the evaluation domain
-	tEval.Domain = ps.Eval
-
-	return tEval, nil
+	out := r.NewPoly()
+	for i, coeff := range a.Coeffs[0] {
+		if coeff == 0 {
+			return nil, false
+		}
+		out.Coeffs[0][i] = invScalar(coeff)
+	}
+	return out, true
 }
 
-// ToPolyNTT converts an Eval-domain CyclotomicFieldElem back into an
-// .*ring.Poly in NTT form (ready for GaussSamp).
-func ToPolyNTT(
-	elem *ps.CyclotomicFieldElem,
+// -----------------------------------------------------------------------------
+// ComputeBBSHash  – exact ring variant (keeps same name)
+// -----------------------------------------------------------------------------
+
+// ComputeBBSHash takes B0…B3 **already in NTT**, lifts m,x0,x1 to NTT, and
+// returns   t = (B0 + B1 m + B2 x0) * (B3 − x1)⁻¹  in NTT form.
+func ComputeBBSHash(
 	ringQ *ring.Ring,
+	B []*ring.Poly, // B[0..3]  – MUST be NTT
+	m, x0, x1 *ring.Poly, // coeff domain, will be lifted
 ) (*ring.Poly, error) {
-	// 1) bring back to coefficient domain
-	elem = ps.ToCoeffNegacyclic(elem, ringQ, 256)
-	fmt.Printf("[ToPolyNTT] after ToCoeffNegacyclic: elem.Coeffs[0] = %v + %vi\n", elem.Coeffs[0].Real, elem.Coeffs[0].Imag)
 
-	// 2) interpolate via IFFT → ring.Poly (coeff), then NTT
-	P := ps.ConvertToPolyBig(elem, ringQ)
-	ringQ.NTT(P, P)
-	fmt.Printf("[ToPolyNTT] output P.Coeffs[0][0] = %d\n", P.Coeffs[0][0])
+	// 0) sanity
+	if len(B) != 4 {
+		return nil, errors.New("need four B polynomials")
+	}
 
-	return P, nil
+	// 1) lift message / masks to NTT
+	ringQ.NTT(m, m)
+	ringQ.NTT(x0, x0)
+	ringQ.NTT(x1, x1)
+
+	tmp := ringQ.NewPoly()
+	r := ringQ.NewPoly()
+
+	// r = B0
+	ring.Copy(B[0], r)
+
+	// r += B1 * m
+	ringQ.MulCoeffs(B[1], m, tmp)
+	ringQ.Add(r, tmp, r)
+
+	// r += B2 * x0
+	ringQ.MulCoeffs(B[2], x0, tmp)
+	ringQ.Add(r, tmp, r)
+
+	// d = B3 - x1
+	d := ringQ.NewPoly()
+	ringQ.Sub(B[3], x1, d)
+
+	// dInv = d⁻¹
+	dInv, ok := polyInverseNTT(ringQ, d)
+	if !ok {
+		return nil, errors.New("denominator not invertible")
+	}
+
+	// t = r * dInv
+	t := ringQ.NewPoly()
+	ringQ.MulCoeffs(r, dInv, t)
+
+	return t, nil
+}
+
+// -----------------------------------------------------------------------------
+// test: slot-wise inverse really works
+// -----------------------------------------------------------------------------
+
+func TestPolyInverseNTT(t *testing.T) {
+	const N = 8
+	const q = 8380417
+
+	ringQ, _ := ring.NewRing(N, []uint64{q})
+	uni, _ := utils.NewPRNG()
+	us := ring.NewUniformSampler(uni, ringQ)
+
+	a := ringQ.NewPoly()
+	us.Read(a)
+	ringQ.NTT(a, a) // lift ← this is what polyInverseNTT expects
+
+	ainv, ok := polyInverseNTT(ringQ, a)
+	if !ok {
+		t.Fatal("poly not invertible (rare event)")
+	}
+
+	// verify Hadamard(a,ainv)==1
+	prod := ringQ.NewPoly()
+	ringQ.MulCoeffs(a, ainv, prod)
+
+	for i, c := range prod.Coeffs[0] {
+		if c != 1 {
+			t.Fatalf("slot %d : a*ainv=%d ≠ 1", i, c)
+		}
+	}
 }

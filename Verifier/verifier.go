@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 
-	ps "vSIS-Signature/Preimage_Sampler"
 	Parameters "vSIS-Signature/System"
 	vsishash "vSIS-Signature/vSIS-HASH"
 
@@ -48,9 +47,9 @@ func Verify() bool {
 		log.Fatalf("loading public key: %v", err)
 	}
 
-	// 4) load B‐matrix as CyclotomicFieldElem[]
+	// 4) load B‐matrix
 	const prec = 256
-	Bcyclo, err := loadBMatrix("Parameters/Bmatrix.json", ringQ, prec)
+	Bcyclo, err := loadBMatrix("Parameters/Bmatrix.json", ringQ)
 	if err != nil {
 		log.Fatalf("loading Bmatrix: %v", err)
 	}
@@ -76,11 +75,10 @@ func Verify() bool {
 	copy(x1Eval.Coeffs[0], sig.X1)
 
 	// 7) recompute t = BBSHash
-	tEval, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mEval, x0Eval, x1Eval, prec)
+	tCmp, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mEval, x0Eval, x1Eval)
 	if err != nil {
 		log.Fatalf("ComputeBBSHash: %v", err)
 	}
-	tCmp, err := vsishash.ToPolyNTT(tEval, ringQ)
 	if err != nil {
 		log.Fatalf("ToPolyNTT: %v", err)
 	}
@@ -191,7 +189,12 @@ func loadSignature(path string) (*SignatureData, error) {
 	return &sd, nil
 }
 
-func loadBMatrix(path string, ringQ *ring.Ring, prec uint) ([]*ps.CyclotomicFieldElem, error) {
+// ----------------------------------------------------------------------------
+// loadBMatrix – now returns the four B-polynomials **already in NTT form**
+// ----------------------------------------------------------------------------
+func loadBMatrix(path string, ringQ *ring.Ring) ([]*ring.Poly, error) {
+
+	// --- read JSON -----------------------------------------------------------
 	type bjson struct {
 		B [][]uint64 `json:"B"`
 	}
@@ -200,17 +203,21 @@ func loadBMatrix(path string, ringQ *ring.Ring, prec uint) ([]*ps.CyclotomicFiel
 		return nil, err
 	}
 	var bj bjson
-	if err := json.Unmarshal(raw, &bj); err != nil {
+	if err = json.Unmarshal(raw, &bj); err != nil {
 		return nil, err
 	}
 	if len(bj.B) != 4 {
 		return nil, fmt.Errorf("expected 4 polys in B, got %d", len(bj.B))
 	}
-	Bcyclo := make([]*ps.CyclotomicFieldElem, 4)
+
+	// --- re-hydrate and lift to NTT ------------------------------------------
+	B := make([]*ring.Poly, 4)
 	for i := 0; i < 4; i++ {
 		p := ringQ.NewPoly()
-		copy(p.Coeffs[0], bj.B[i])
-		Bcyclo[i] = ps.ConvertFromPolyBig(ringQ, p, prec)
+		copy(p.Coeffs[0], bj.B[i]) // coefficients → poly (coeff. domain)
+		ringQ.NTT(p, p)            // single lift to evaluation / NTT domain
+		B[i] = p
 	}
-	return Bcyclo, nil
+
+	return B, nil
 }
