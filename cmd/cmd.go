@@ -6,6 +6,7 @@ import (
 	"log"
 
 	// "vSIS-Signature/Preimage_Sampler"
+	proverzkp "vSIS-Signature/ProverZKP"
 	signer "vSIS-Signature/Signer"
 	Parameters "vSIS-Signature/System"
 	verifier "vSIS-Signature/Verifier"
@@ -21,11 +22,20 @@ func main() {
 	fmt.Println("✍️  Generating keypair and signature...")
 	signer.Sign()
 
-	// 3) Verify the freshly produced signature
+	// 3) Verify the signature as before
 	fmt.Println("🔍 Verifying signature...")
 	if ok := verifier.Verify(); !ok {
 		log.Fatal("❌ Signature verification failed")
 	}
 
-	fmt.Println("✅ All done: signature is valid.")
+	// 4) Build the quadratic gate and check ZKP prerequisites
+	fmt.Println("⚙️  Building quadratic gate …")
+	pub, priv, err := proverzkp.BuildGateFromDisk()
+	if err != nil {
+		log.Fatalf("gate build: %v", err)
+	}
+	fmt.Printf("   Gate built: |R1|=%d  witnessDim=%d\n",
+		len(pub.R1), len(priv.X))
+
+	fmt.Println("✅ All done.")
 }

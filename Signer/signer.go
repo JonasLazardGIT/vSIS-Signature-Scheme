@@ -39,7 +39,7 @@ type SignatureData struct {
 
 func Sign() {
 	// 1) load public parameters
-	params, err := loadParams("Parameters/Parameters.json")
+	params, err := LoadParams("Parameters/Parameters.json")
 	if err != nil {
 		log.Fatalf("loadParams: %v", err)
 	}
@@ -54,7 +54,7 @@ func Sign() {
 	var trap ps.Trapdoor
 	if fileExists("public_key/public_key.json") && fileExists("private_key/private_key.json") {
 		log.Println("Loading existing keypair...")
-		pk, err := loadPublicKey("public_key/public_key.json")
+		pk, err := LoadPublicKey("public_key/public_key.json")
 		if err != nil {
 			log.Fatalf("loadPublicKey: %v", err)
 		}
@@ -135,7 +135,7 @@ func Sign() {
 	log.Println("✔ Signing complete")
 }
 
-func loadParams(path string) (*Parameters.SystemParams, error) {
+func LoadParams(path string) (*Parameters.SystemParams, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -278,7 +278,7 @@ func saveSignature(path string, message, x0, x1, target []uint64, signature [][]
 	return err
 }
 
-func loadPublicKey(path string) (*PublicKey, error) {
+func LoadPublicKey(path string) (*PublicKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
