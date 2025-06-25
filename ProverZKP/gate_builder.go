@@ -4,6 +4,7 @@ package proverzkp
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	qgate "vSIS-Signature/Quadratic_Gate"
 	signer "vSIS-Signature/Signer"
@@ -132,11 +133,22 @@ func BuildGateFromDisk() (qgate.GatePublic, qgate.GatePrivate, error) {
 	}
 
 	// ‣ 5. build quadratic gate -----------------------------------------------
-	return qgate.BuildGate(
+	pub, priv, err := qgate.BuildGate(
 		ringQ,
 		A, b1,
 		B0Const, B0Msg, B0Rnd,
 		rho,
-		/*private*/ s, x1, []*ring.Poly{m}, []*ring.Poly{x0},
-	)
+		/*private*/ s, x1, []*ring.Poly{m}, []*ring.Poly{x0})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := qgate.VerifyGate(ringQ, pub, priv); err != nil {
+		log.Fatalf("gate verification: %v", err)
+	}
+	// fmt.Println("✓   xᵀR₂x + r₁ᵀx + r₀ = 0  holds")
+	// fmt.Print("public key: ")
+	// fmt.Printf("R0 : %v\n", pub.R0.Coeffs)
+	return pub, priv, nil
 }

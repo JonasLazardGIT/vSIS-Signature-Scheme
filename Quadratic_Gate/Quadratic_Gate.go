@@ -252,3 +252,50 @@ func BuildGate(
 
 	return pub, priv, nil
 }
+
+// -----------------------------------------------------------------------------
+//
+//	VerifyGate – recompute  sᵀR₂s + r₁ᵀs + r₀  and check it is zero
+//
+// -----------------------------------------------------------------------------
+func VerifyGate(r *ring.Ring, pub GatePublic, priv GatePrivate) error {
+
+	k := len(priv.X)
+
+	// --- 1. quadratic part  xᵀ R2 x -----------------------------------------
+	quad := r.NewPoly()
+
+	for i := 0; i < k; i++ {
+		for j := 0; j < k; j++ {
+			if r.Equal(pub.R2[i][j], r.NewPoly()) { // skip explicit zeros – sparse matrix
+				continue
+			}
+			tmp := r.NewPoly()
+			r.MulCoeffs(pub.R2[i][j], priv.X[i], tmp) // R2_ij * x_i
+			r.MulCoeffs(tmp, priv.X[j], tmp)          // * x_j
+			r.Add(quad, tmp, quad)
+		}
+	}
+
+	// --- 2. linear part  r1ᵀ x ----------------------------------------------
+	lin := r.NewPoly()
+	for i := 0; i < k; i++ {
+		if r.Equal(pub.R1[i], r.NewPoly()) {
+			continue
+		}
+		tmp := r.NewPoly()
+		r.MulCoeffs(pub.R1[i], priv.X[i], tmp)
+		r.Add(lin, tmp, lin)
+	}
+
+	// --- 3. total = quad + lin + r0 ------------------------------------------
+	total := r.NewPoly()
+	r.Add(quad, lin, total)
+	r.Add(total, pub.R0, total)
+
+	// --- 4. success ? ---------------------------------------------------------
+	if r.Equal(total, r.NewPoly()) {
+		return nil
+	}
+	return fmt.Errorf("quadratic-gate check failed (first slot = %d)", total.Coeffs[0][0])
+}
