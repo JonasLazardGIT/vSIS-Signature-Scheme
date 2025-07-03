@@ -52,10 +52,7 @@ func TestLVCSCommitAndEval(t *testing.T) {
 	ver.CommitStep1(root)
 
 	// Prover: finish (recv Γ, send R)
-	R, err := CommitFinish(proverKey, ver.Gamma)
-	if err != nil {
-		t.Fatalf("CommitFinish: %v", err)
-	}
+	R := CommitFinish(proverKey, ver.Gamma)
 
 	// Verifier: receive R
 	ver.CommitStep2(R)

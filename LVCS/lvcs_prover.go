@@ -18,7 +18,9 @@ type ProverKey struct {
 	MaskData [][]uint64 // random ̄r_j
 }
 
-// CommitInit runs LVCS.Commit steps 1+2 (through DECS.CommitInit).
+// CommitInit – §4.1 steps 1–2:
+// Lift each row vector to a degree-(N+ℓ−1) polynomial by appending ℓ random masks
+// and commit all those polynomials via DECS.
 func CommitInit(
 	ringQ *ring.Ring,
 	rows [][]uint64, // r_j in F_q^N
@@ -65,16 +67,18 @@ func CommitInit(
 	return
 }
 
-// CommitFinish runs LVCS.Commit step 3 (DECS.CommitStep2).
+// CommitFinish – §4.1 step 3:
+// Later, open masked linear combinations on a small random subset EE of size ℓ.
 func CommitFinish(
 	prover *ProverKey,
 	Gamma [][]uint64,
-) ([]*ring.Poly, error) {
+) []*ring.Poly {
 	// nothing exported in decs.Prover needs ringQ here
-	return prover.DecsProver.CommitStep2(Gamma), nil
+	return prover.DecsProver.CommitStep2(Gamma)
 }
 
-// EvalInit runs LVCS.Eval step 1:  ¯v_k = Σ_j C[k][j]·mask_j
+// EvalInit – §4.1 step 1:
+// Compute each \bar{v}_k = Σ_j C[k][j] · mask_j.
 func EvalInit(
 	ringQ *ring.Ring,
 	prover *ProverKey,
@@ -99,7 +103,8 @@ func EvalInit(
 	return bar
 }
 
-// EvalFinish runs LVCS.Eval steps 3+4 (DECS.EvalOpen).
+// EvalFinish – §4.1 steps 3–4:
+// Open the masked positions via DECS.EvalOpen.
 func EvalFinish(
 	prover *ProverKey,
 	E []int,

@@ -24,19 +24,21 @@ func NewVerifier(ringQ *ring.Ring, r, eta int) *VerifierState {
 	return &VerifierState{RingQ: ringQ, r: r, eta: eta}
 }
 
-// CommitStep1: record the root, sample Γ via the exported method.
+// CommitStep1 – §4.1 steps 1–3:
+// Commit all those polynomials via DECS and record the commitment root.
 func (v *VerifierState) CommitStep1(root [32]byte) {
 	v.Root = root
 	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
 	v.Gamma = decv.DeriveGamma(root) // <- fixed: use DeriveGamma on Verifier, not decs.DeriveGamma
 }
 
-// CommitStep2: record the prover’s R_k polys
+// CommitStep2 stores the prover's R_k polynomials.
 func (v *VerifierState) CommitStep2(R []*ring.Poly) {
 	v.R = R
 }
 
-// ChooseE picks a uniformly random size‐ℓ subset of [0..N).
+// ChooseE – §4.1 step 3:
+// Later, open masked linear combinations on a small random subset EE of size ℓ.
 func (v *VerifierState) ChooseE(ell int) []int {
 	N := v.RingQ.N
 	E := make([]int, ell)
@@ -47,10 +49,8 @@ func (v *VerifierState) ChooseE(ell int) []int {
 	return E
 }
 
-// EvalStep2 does the final LVCS.Eval verification:
-//
-//	(1) delegate Merkle+DECS.Eval checks to decs.Verifier.VerifyEval
-//	(2) check Qk(e) = Σ_j C[k][j]·Pj(e) for each k, t
+// EvalStep2 – §4.1 step 4:
+// Verify Merkle + low-degree + linear checks, leaking only the ℓ masked positions.
 func (v *VerifierState) EvalStep2(
 	bar [][]uint64, // prover’s ¯v_k
 	E []int, // challenge set
@@ -63,20 +63,21 @@ func (v *VerifierState) EvalStep2(
 		return false
 	}
 
-	// 2) check for each k,t: Q_k(e_t) ?= Σ_j C[k][j]·P_j(e_t)
+	// 2) check only the masked positions
 	mod := v.RingQ.Modulus[0]
 	ncols := v.RingQ.N - len(bar[0])
-	for k := range bar {
-		for t, idx := range open.Indices {
+	for t, idx := range open.Indices {
+		if idx < ncols {
+			continue
+		}
+		maskedPos := idx - ncols
+		for k := range bar {
 			acc := uint64(0)
 			for j := 0; j < v.r; j++ {
 				acc = (acc + C[k][j]*open.Pvals[t][j]) % mod
 			}
-			if idx >= ncols {
-				i := idx - ncols
-				if i >= len(bar[k]) || acc != bar[k][i] {
-					return false
-				}
+			if acc != bar[k][maskedPos] {
+				return false
 			}
 		}
 	}
