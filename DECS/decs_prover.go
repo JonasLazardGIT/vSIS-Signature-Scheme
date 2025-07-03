@@ -82,8 +82,8 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 		copy(buf[off:], rho)
 		pr.nonces[i] = rho
 
-		h := sha256.Sum256(buf)
-		leaves[i] = h[:]
+		// store the raw buffer; BuildMerkleTree will hash it
+		leaves[i] = append([]byte(nil), buf...)
 	}
 
 	// 1d) Merkle tree
@@ -109,7 +109,7 @@ func (pr *Prover) CommitStep2(Gamma [][]uint64) []*ring.Poly {
 			pr.ringQ.MulScalar(tmp, Gamma[k][j], tmp2) // tmp2 = tmp * Γ[k][j]
 			pr.ringQ.Add(pr.R[k], tmp2, pr.R[k])       // R[k] += tmp2
 		}
-		pr.ringQ.NTT(pr.R[k], pr.R[k])
+		// keep R[k] in coefficient form; verifier will NTT as needed
 	}
 	return pr.R
 }
