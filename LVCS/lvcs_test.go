@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
+	decs "vSIS-Signature/DECS"
 )
 
 func TestLVCSCommitAndEval(t *testing.T) {
@@ -31,8 +32,8 @@ func TestLVCSCommitAndEval(t *testing.T) {
 	rows := make([][]uint64, nrows)
 	q0 := ringQ.Modulus[0]
 	for j := 0; j < nrows; j++ {
-		rows[j] = make([]uint64, ringQ.N)
-		for i := 0; i < ringQ.N; i++ {
+		rows[j] = make([]uint64, ringQ.N-ell)
+		for i := 0; i < ringQ.N-ell; i++ {
 			x, _ := rand.Int(rand.Reader, big.NewInt(int64(q0)))
 			rows[j][i] = x.Uint64()
 		}
@@ -47,7 +48,7 @@ func TestLVCSCommitAndEval(t *testing.T) {
 	}
 
 	// Verifier: record commitment & sample Γ
-	ver := NewVerifier(ringQ, nrows, ell)
+	ver := NewVerifier(ringQ, nrows, decs.Eta)
 	ver.CommitStep1(root)
 
 	// Prover: finish (recv Γ, send R)

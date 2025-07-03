@@ -29,7 +29,6 @@ func CommitInit(
 	err error,
 ) {
 	nrows := len(rows)
-	N := ringQ.N
 	q0 := ringQ.Modulus[0]
 
 	// 1a) sample masks ̄r_j ∈ F_q^ℓ
@@ -45,7 +44,8 @@ func CommitInit(
 	// 1b) interpolate each (r_j, mask_j) into P_j(X)
 	polys := make([]*ring.Poly, nrows)
 	for j := range rows {
-		if polys[j], err = interpolateRow(ringQ, rows[j], masks[j], N, ell); err != nil {
+		ncols := len(rows[j])
+		if polys[j], err = interpolateRow(ringQ, rows[j], masks[j], ncols, ell); err != nil {
 			return
 		}
 	}

@@ -65,14 +65,18 @@ func (v *VerifierState) EvalStep2(
 
 	// 2) check for each k,t: Q_k(e_t) ?= Σ_j C[k][j]·P_j(e_t)
 	mod := v.RingQ.Modulus[0]
+	ncols := v.RingQ.N - len(bar[0])
 	for k := range bar {
-		for t := range open.Pvals {
+		for t, idx := range open.Indices {
 			acc := uint64(0)
 			for j := 0; j < v.r; j++ {
 				acc = (acc + C[k][j]*open.Pvals[t][j]) % mod
 			}
-			if acc != bar[k][t] {
-				return false
+			if idx >= ncols {
+				i := idx - ncols
+				if i >= len(bar[k]) || acc != bar[k][i] {
+					return false
+				}
 			}
 		}
 	}
