@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	decs "vSIS-Signature/DECS"
 	pcs "vSIS-Signature/PCS"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -21,7 +22,7 @@ func TestPCSEndToEnd(t *testing.T) {
 
 	// 2) PCS parameters: DECS repetition η, block size μ, mask‐rows ℓ′
 	const (
-		Eta      = 4
+		Eta      = decs.Eta
 		Mu       = 3
 		EllPrime = 5
 	)
