@@ -6,8 +6,9 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
 	decs "vSIS-Signature/DECS"
+
+	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
 func TestLVCSCommitAndEval(t *testing.T) {
@@ -17,7 +18,6 @@ func TestLVCSCommitAndEval(t *testing.T) {
 	// parameter set; here we use toy values so the test runs quickly.
 	// N must be a power of two and q ≡ 1 mod 2N.
 	N := 1 << 11
-	// 0x1000000000001 is prime and ≡1 mod 32
 	moduli := []uint64{(1<<32 - (1 << 20) + 1)}
 	ringQ, err := ring.NewRing(N, moduli)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestLVCSCommitAndEval(t *testing.T) {
 	opening := EvalFinish(proverKey, E)
 
 	// Verifier: final check
-	ok := ver.EvalStep2(bar, E, opening, C)
+	ok := ver.EvalStep2(bar, E, opening.DECSOpen, C)
 	if !ok {
 		t.Fatal("LVCS.EvalStep2 failed: proof rejected")
 	}

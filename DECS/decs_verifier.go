@@ -19,7 +19,7 @@ func NewVerifier(ringQ *ring.Ring, r, eta int) *Verifier {
 
 // DeriveGamma runs step 2 (commit → Γ).
 func (v *Verifier) DeriveGamma(root [32]byte) [][]uint64 {
-	return deriveGamma(root, v.eta, v.r)
+	return DeriveGamma(root, v.eta, v.r)
 }
 
 // VerifyCommit is a no-op here.

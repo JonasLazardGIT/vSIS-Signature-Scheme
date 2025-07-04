@@ -140,7 +140,7 @@ func (pr *Prover) EvalOpen(E []int) *DECSOpening {
 }
 
 // deriveGamma expands root→η×r challenge matrix via SHA256+counter
-func deriveGamma(root [32]byte, eta, r int) [][]uint64 {
+func DeriveGamma(root [32]byte, eta, r int) [][]uint64 {
 	out := make([][]uint64, eta)
 	var ctr uint32
 	buf := make([]byte, 36)

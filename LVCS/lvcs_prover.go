@@ -9,6 +9,10 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
+type Opening struct {
+	DECSOpen *decs.DECSOpening
+}
+
 // ProverKey holds everything the prover needs between Commit and Eval.
 type ProverKey struct {
 	RingQ      *ring.Ring   // so we can grab q later without touching unexported decs.Prover.ringQ
@@ -16,6 +20,7 @@ type ProverKey struct {
 
 	RowData  [][]uint64 // original r_j
 	MaskData [][]uint64 // random ̄r_j
+	Gamma    [][]uint64
 }
 
 // CommitInit – §4.1 steps 1–2:
@@ -57,12 +62,14 @@ func CommitInit(
 	if root, err = dprover.CommitInit(); err != nil {
 		return
 	}
+	Gamma := decs.DeriveGamma(root, decs.Eta, nrows)
 
 	prover = &ProverKey{
 		RingQ:      ringQ,
 		DecsProver: dprover,
 		RowData:    rows,
 		MaskData:   masks,
+		Gamma:      Gamma,
 	}
 	return
 }
@@ -108,6 +115,7 @@ func EvalInit(
 func EvalFinish(
 	prover *ProverKey,
 	E []int,
-) *decs.DECSOpening {
-	return prover.DecsProver.EvalOpen(E)
+) *Opening {
+	decsOpen := prover.DecsProver.EvalOpen(E)
+	return &Opening{DECSOpen: decsOpen}
 }
