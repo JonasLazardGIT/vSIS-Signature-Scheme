@@ -68,11 +68,12 @@ func BuildWitness(
 	x0 []*ring.Poly,
 ) (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 
-	n := len(A)           // #rows in A
-	m := len(s)           // len(signature vector)
-	lu := len(u)          // len(message block
-	lx0 := len(x0)        // len(mask block
-	k := m + 1 + lu + lx0 // witness length
+	n := len(A)    // #rows in A
+	m := len(s)    // len(signature vector)
+	lu := len(u)   // len(message block
+	lx0 := len(x0) // len(mask block
+	// witness vector (s, u, x0) has length m + lu + lx0
+	k := m + lu + lx0
 
 	// -------------------------------------------------------------------------
 	// 0)  Sanity-check dimensions
