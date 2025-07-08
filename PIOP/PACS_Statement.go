@@ -353,14 +353,14 @@ func BuildQFromDisk() (Q []*ring.Poly, omega []uint64, ringQ *ring.Ring) {
 	}
 
 	//-------------------------------------------------------------------[2] B-mat
-	Bcoeffs, _ := loadBmatrixCoeffs("Parameters/Bmatrix.json")
+	Bcoeffs, _ := loadBmatrixCoeffs("../Parameters/Bmatrix.json")
 	B0Const := []*ring.Poly{toNTTwrap(ringQ, Bcoeffs[0], toNTT)}
 	B0Msg := [][]*ring.Poly{{toNTTwrap(ringQ, Bcoeffs[1], toNTT)}}
 	B0Rnd := [][]*ring.Poly{{toNTTwrap(ringQ, Bcoeffs[2], toNTT)}}
 	b1 := []*ring.Poly{toNTTwrap(ringQ, Bcoeffs[3], toNTT)}
 
 	//-------------------------------------------------------------------[3] sign
-	sig, _ := loadSignature("Signature/Signature.json")
+	sig, _ := loadSignature("../Signature/Signature.json")
 	m := toNTTwrap(ringQ, sig.Message, toNTT)
 	x0 := toNTTwrap(ringQ, sig.X0, toNTT)
 	x1 := toNTTwrap(ringQ, sig.X1, toNTT)
