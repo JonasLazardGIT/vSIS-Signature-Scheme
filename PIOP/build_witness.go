@@ -2,6 +2,8 @@
 package PIOP
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +45,32 @@ func loadBmatrixCoeffs(path string) ([][]uint64, error) {
 // zeroPoly allocates an all-zero polynomial in NTT form.
 func zeroPoly(r *ring.Ring) *ring.Poly { p := r.NewPoly(); return p }
 
+// randomVector returns a slice of n fresh elements in [0,q).
+// Panics on entropy failure.
+func randomVector(n int, q uint64) []uint64 {
+	if q == 0 {
+		panic("randomVector: modulus q == 0")
+	}
+
+	// largest multiple of q that fits in 64 bits – values ≥bound are rejected
+	var bound uint64 = ^uint64(0) - (^uint64(0) % q)
+
+	vec := make([]uint64, n)
+	for i := 0; i < n; {
+		var buf [8]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			panic("randomVector: entropy read failed: " + err.Error())
+		}
+		v := binary.LittleEndian.Uint64(buf[:])
+		if v >= bound { // rejection step: avoid modulo bias
+			continue
+		}
+		vec[i] = v % q
+		i++
+	}
+	return vec
+}
+
 // copyPoly returns a deep copy of p.
 func copyPoly(r *ring.Ring, p *ring.Poly) *ring.Poly {
 	out := r.NewPoly()
@@ -53,6 +81,27 @@ func copyPoly(r *ring.Ring, p *ring.Poly) *ring.Poly {
 // addInto  :  dst += src
 func addInto(r *ring.Ring, dst, src *ring.Poly) { r.Add(dst, src, dst) }
 
+// mulScalarNTT multiplies every coefficient of p by the scalar c (mod q)
+// and writes the result into dst.  Both p and dst must be in NTT form;
+// dst may alias p for in-place updates.
+func mulScalarNTT(r *ring.Ring, p *ring.Poly, c uint64, dst *ring.Poly) {
+	if c == 0 {
+		// quick-zero
+		for i := range dst.Coeffs[0] {
+			dst.Coeffs[0][i] = 0
+		}
+		return
+	}
+
+	q := r.Modulus[0]
+	c %= q
+
+	// Montgomery representation: coefficient-wise multiplication
+	for i := range p.Coeffs[0] {
+		dst.Coeffs[0][i] = (p.Coeffs[0][i] * c) % q
+	}
+}
+
 func BuildWitness(
 	ringQ *ring.Ring,
 	A [][]*ring.Poly,
@@ -60,7 +109,6 @@ func BuildWitness(
 	B0Const []*ring.Poly,
 	B0Msg [][]*ring.Poly,
 	B0Rnd [][]*ring.Poly,
-	rho []uint64, // assumed in coefficient domain, centred in [0,q)
 	/* private */
 	s []*ring.Poly,
 	x1 *ring.Poly,
@@ -240,8 +288,239 @@ func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 		ringQ,
 		A, b1,
 		B0Const, B0Msg, B0Rnd,
-		rho,
 		/*private*/ s, x1, []*ring.Poly{m}, []*ring.Poly{x0})
 
 	return w1, w2, w3
+}
+
+// -----------------------------------------------------------------------------
+// 1) Build batched constraints  G  and  H
+// -----------------------------------------------------------------------------
+func BuildGH(
+	ringQ *ring.Ring,
+	/* witnesses */ w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly,
+	/* public */ A [][]*ring.Poly, b1 []*ring.Poly,
+	B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly,
+	/* challenges */ gamma, delta []uint64,
+) (G, H *ring.Poly) {
+
+	k := len(w1) // len(w3) == k
+	n := len(A)  // #rows
+
+	if len(gamma) != k || len(delta) != n {
+		log.Fatal("gamma or delta has wrong length")
+	}
+
+	// zero polys
+	G = ringQ.NewPoly()
+	H = ringQ.NewPoly()
+
+	// -------------------------------------------------------------------------
+	// (A)  Quadratic batch   G = Σ γ_i ( w3_i − w1_i * w2 )
+	// -------------------------------------------------------------------------
+	tmpMul := ringQ.NewPoly()
+	tmpSub := ringQ.NewPoly()
+	tmpScal := ringQ.NewPoly()
+
+	for i := 0; i < k; i++ {
+		// w1_i * w2
+		ringQ.MulCoeffs(w1[i], w2, tmpMul)
+		// w3_i − w1_i*w2
+		ringQ.Sub(w3[i], tmpMul, tmpSub)
+		// γ_i (…)
+		mulScalarNTT(ringQ, tmpSub, gamma[i]%ringQ.Modulus[0], tmpScal)
+		// accumulate
+		addInto(ringQ, G, tmpScal)
+	}
+
+	// -------------------------------------------------------------------------
+	// (B)  Linear batch   H = Σ δ_j rowError_j
+	// rowError_j = (b1⊙A)_j·s − A_j·w3 − B0_row(1,u,x0)
+	// -------------------------------------------------------------------------
+	m := len(w3) // equals len signature vector s
+
+	rowErr := ringQ.NewPoly()
+	left1 := ringQ.NewPoly()
+	left2 := ringQ.NewPoly()
+	right := ringQ.NewPoly()
+	tmp := ringQ.NewPoly()
+
+	one := ringQ.NewPoly()
+	one.Coeffs[0][0] = 1 // constant 1 in NTT domain
+
+	for j := 0; j < n; j++ {
+
+		// reset accumulators
+		for _, poly := range []*ring.Poly{left1, left2, right, rowErr} {
+			for idx := range poly.Coeffs[0] {
+				poly.Coeffs[0][idx] = 0
+			}
+		}
+
+		// (b1 ⊙ A)s
+		for t := 0; t < m; t++ {
+			ringQ.MulCoeffs(b1[j], A[j][t], tmp) // b1_j * A_j,t
+			ringQ.MulCoeffs(tmp, w1[t], tmp)     // * s_t  (s is first part of w1)
+			addInto(ringQ, left1, tmp)
+		}
+
+		// (A s) * x1   where  x1 = w2
+		for t := 0; t < m; t++ {
+			ringQ.MulCoeffs(A[j][t], w1[t], tmp) // A_j,t * s_t
+			ringQ.MulCoeffs(tmp, w2, tmp)        // * x1
+			addInto(ringQ, left2, tmp)
+		}
+
+		// B0*(1,u,x0)
+		//   B0Const part (1)
+		addInto(ringQ, right, B0Const[j])
+		//   message u  (u starts at index m in w1)
+		for i := range B0Msg {
+			ringQ.MulCoeffs(B0Msg[i][j], w1[m+i], tmp)
+			addInto(ringQ, right, tmp)
+		}
+		//   mask  x0   (starts at m+|u| in w1)
+		offset := m + len(B0Msg)
+		for i := range B0Rnd {
+			ringQ.MulCoeffs(B0Rnd[i][j], w1[offset+i], tmp)
+			addInto(ringQ, right, tmp)
+		}
+
+		// rowErr = left1 − left2 − right
+		ringQ.Sub(left1, left2, rowErr)
+		ringQ.Sub(rowErr, right, rowErr)
+
+		// accumulate  δ_j * rowErr
+		mulScalarNTT(ringQ, rowErr, delta[j]%ringQ.Modulus[0], tmpScal)
+		addInto(ringQ, H, tmpScal)
+	}
+
+	return G, H
+}
+
+// -----------------------------------------------------------------------------
+// 2) Verify that  G == 0  and  H == 0   for given witnesses/challenges
+// -----------------------------------------------------------------------------
+func VerifyGH(
+	ringQ *ring.Ring,
+	w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly,
+	A [][]*ring.Poly, b1 []*ring.Poly,
+	B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly,
+	gamma, delta []uint64,
+) bool {
+
+	G, H := BuildGH(ringQ, w1, w2, w3, A, b1, B0Const, B0Msg, B0Rnd, gamma, delta)
+	return ringQ.Equal(G, ringQ.NewPoly()) && ringQ.Equal(H, ringQ.NewPoly())
+}
+
+// -----------------------------------------------------------------------------
+// 3)  High-level helper – load everything and verify G & H
+// -----------------------------------------------------------------------------
+
+// VerifyGHFromDisk reconstructs the witnesses and public data from the JSON
+// files located under  Parameters/, public_key/, Signature/  (same paths used
+// elsewhere in the code-base).  It draws fresh random challenges γ and δ and
+// returns true iff  BuildGH  yields G≡0 and H≡0.
+//
+// Typical use in an integration test:
+//
+//	ok := PIOP.VerifyGHFromDisk()
+//	if !ok { t.Fatal("G/H constraints do not hold") }
+//
+// Any I/O or dimension mismatch aborts via log.Fatal just like the other helpers
+// in this file.
+func VerifyGHFromDisk() bool {
+
+	// • 0. load ring parameters ------------------------------------------------
+	par, err := signer.LoadParams("Parameters/Parameters.json")
+	if err != nil {
+		log.Fatalf("cannot read Parameters.json: %v", err)
+	}
+	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
+	toNTT := func(p *ring.Poly) { ringQ.NTT(p, p) }
+
+	// • 1. public key – A matrix (already in NTT) ------------------------------
+	pk, err := signer.LoadPublicKey("public_key/public_key.json")
+	if err != nil {
+		log.Fatalf("cannot read public_key.json: %v", err)
+	}
+	nRows := 1 // in this toy example we only have one row
+
+	A := make([][]*ring.Poly, nRows)
+	A[0] = make([]*ring.Poly, len(pk.A))
+	for i, coeffs := range pk.A {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], coeffs)
+		A[0][i] = p // keep in NTT
+	}
+
+	// • 2. B-matrix columns (coeff domain → lift) ------------------------------
+	Bcoeffs, err := loadBmatrixCoeffs("Parameters/Bmatrix.json")
+	if err != nil {
+		log.Fatalf("cannot read Bmatrix.json: %v", err)
+	}
+
+	B0Const := make([]*ring.Poly, nRows)
+	B0Msg := [][]*ring.Poly{make([]*ring.Poly, nRows)}
+	B0Rnd := [][]*ring.Poly{make([]*ring.Poly, nRows)}
+	b1 := make([]*ring.Poly, nRows)
+
+	makePolyNTT := func(raw []uint64) *ring.Poly {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], raw)
+		toNTT(p)
+		return p
+	}
+	B0Const[0] = makePolyNTT(Bcoeffs[0])
+	B0Msg[0][0] = makePolyNTT(Bcoeffs[1])
+	B0Rnd[0][0] = makePolyNTT(Bcoeffs[2])
+	b1[0] = makePolyNTT(Bcoeffs[3])
+
+	// • 3. signature + message --------------------------------------------------
+	sig, err := loadSignature("Signature/Signature.json")
+	if err != nil {
+		log.Fatalf("cannot read Signature.json: %v", err)
+	}
+
+	m := makePolyNTT(sig.Message) // u
+	x0 := makePolyNTT(sig.X0)
+	x1 := makePolyNTT(sig.X1)
+
+	s := make([]*ring.Poly, len(sig.Signature)) // signature vector (already NTT)
+	for i, coeffs := range sig.Signature {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], coeffs)
+		s[i] = p
+	}
+
+	// • 4. dummy ρ  (not used in constraints, but BuildWitness expects it) -----
+
+	// • 5. build witnesses ------------------------------------------------------
+	w1, w2, w3 := BuildWitness(
+		ringQ,
+		A, b1,
+		B0Const, B0Msg, B0Rnd,
+		/*private*/ s, x1,
+		[]*ring.Poly{m},  // u
+		[]*ring.Poly{x0}, // x0
+	)
+
+	// • 6. sample Fiat–Shamir challenges ---------------------------------------
+	gamma := randomVector(len(w1), ringQ.Modulus[0])
+	delta := randomVector(len(A), ringQ.Modulus[0])
+
+	// • 7. verify --------------------------------------------------------------
+	ok := VerifyGH(ringQ,
+		w1, w2, w3,
+		A, b1,
+		B0Const, B0Msg, B0Rnd,
+		gamma, delta,
+	)
+
+	if ok {
+		fmt.Println("[VerifyGHFromDisk]  G == 0  and  H == 0  ✓")
+	} else {
+		fmt.Println("[VerifyGHFromDisk]  verification FAILED ✗")
+	}
+	return ok
 }

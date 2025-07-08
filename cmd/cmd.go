@@ -28,10 +28,12 @@ func main() {
 		log.Fatal("❌ Signature verification failed")
 	}
 
-	fmt.Println("⚙️  Building quadratic gate …")
+	fmt.Println("⚙️  Building Witnesses …")
 	w1, w2, w3 := PIOP.BuildWitnessFromDisk()
 	fmt.Printf("   Gate built, lengths are : w1: %d, w2: %d, w3: %d\n",
 		len(w1), len(w2.Coeffs[0]), len(w3))
 
+	fmt.Println("🔗 Linking Witnesses to the GH Gate …")
+	PIOP.VerifyGHFromDisk()
 	fmt.Println("✅ All done.")
 }
