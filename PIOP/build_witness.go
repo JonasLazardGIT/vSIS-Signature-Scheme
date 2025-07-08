@@ -337,7 +337,9 @@ func BuildGH(
 	// (B)  Linear batch   H = Σ δ_j rowError_j
 	// rowError_j = (b1⊙A)_j·s − A_j·w3 − B0_row(1,u,x0)
 	// -------------------------------------------------------------------------
-	m := len(w3) // equals len signature vector s
+	// len(w3) includes the message and mask components; the signature
+	// length is the witness length minus those extras
+	m := len(w1) - len(B0Msg) - len(B0Rnd)
 
 	rowErr := ringQ.NewPoly()
 	left1 := ringQ.NewPoly()
