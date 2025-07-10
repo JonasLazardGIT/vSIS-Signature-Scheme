@@ -101,5 +101,120 @@ Delete them once the code stabilises; they add no semantic value.
    `[]*ring.Poly` ready for commitment.
 
 ---
+### What **`PACS_Simulation.go`** is and why it exists
 
-*Last updated:* 2025‑07‑08
+`PACS_Simulation.go` is a *self-contained integration test* that walks through a **single, fully interactive execution** of the SmallWood PACS protocol on the toy “quadratic-gate” instance shipped with the repository.
+It does **not** invent stand-in values; every public constant, witness component and ring parameter is pulled from the same JSON fixtures used by the real prover:
+
+* `Parameters/Parameters.json` — ring degree *N* and modulus *q*
+* `public_key/public_key.json` — the public matrix *A* already in NTT form
+* `Parameters/Bmatrix.json` — the row-wise public constants for the aggregated constraints
+* `Signature/Signature.json` — the message block *u*, masks x₀/x₁ and the lattice signature vector *s*
+
+With those files it reproduces exactly the witness that the genuine verifier should see “under the hood”, then re-enacts the three protocol layers:
+
+```
+DECS  (degree-enforcing, small-domain commitment)
+       ↓
+LVCS  (linear-map commitment)
+       ↓
+PACS  (parallel + aggregated constraint system)
+```
+
+The code does not try to *reimplement* DECS or the Merkle tree—that is already tested elsewhere.
+Instead it focuses on the parts that are **unique to PACS**:
+
+1. building the parallel and aggregated constraint polynomials **F** and **F′**;
+2. sampling the Fiat–Shamir matrices **Γ′** (polynomials) and **γ′** (scalars);
+3. constructing each masking-row polynomial **Qᵢ(X)** exactly as in Equation (4);
+4. re-checking
+
+   * the point-wise consistency of (4) on a fresh evaluation point *e*, and
+   * the Σ-at-Ω vanishing test of Equation (7);
+5. collecting every message into an explicit, human-readable **transcript**.
+
+If all tests pass the script prints:
+
+```
+Verifier ➜ ACCEPT – all checks passed.
+```
+
+Any failure is flagged as **REJECT** and the surrounding unit test (`TestPACSSimulation`) panics, so a continuous-integration run will turn red.
+
+---
+
+### High-altitude structure
+
+```
+┌────────────────────────────────────────┐
+│ RunPACSSimulation()                    │
+│  0  load ring parameters (N, q)        │
+│  1  BuildWitnessFromDisk()             │
+│  2  Ω := {1, …, s}                     │
+│  3  buildFpar / buildFagg              │
+│  4  sample Γ′, γ′  (verifier drives)   │
+│  5  Q := BuildQ( … )                   │
+│  6  verifier checks & pretty print     │
+└────────────────────────────────────────┘
+```
+
+*Steps 0–1 — context & witness*
+`BuildWitnessFromDisk` uses exactly the same helper pipeline as the genuine prover (Gauss sampling vectors, lifting to the NTT ring, sanity-checking the proof-friendly “row equation”) and returns the triplet **w₁, w₂, w₃** that will feed the PACS constraints.
+
+*Step 2 — evaluation domain*
+For the toy instance the number of witness columns *s* is small (≈ 32).
+The simulation uses the first *s* integer roots Ω = {1,2,…,s} because they are guaranteed to be in the ring’s multiplicative subgroup and are exactly the points used when the witness rows were interpolated into polynomials.
+
+*Step 3 — constraint polynomials*
+
+* **Fpar**   one polynomial per column *k* realising the quadratic gate
+  *Fparₖ(X) = w₃ₖ − w₁ₖ·w₂*
+
+* **Fagg**  one polynomial per matrix row *j* realising the aggregated gate
+  *F′ⱼ(X) = (b₁⊙A)s − (A·s)x₁ − B₀(1;u;x₀)*
+
+Those two helpers are already part of the repository; the simulation calls them unmodified.
+
+*Step 4 — Fiat–Shamir randomness*
+Because we are debugging an *interactive* protocol the verifier, not the prover, draws the randomness:
+
+* `sampleRandPolys` ⇒ **Γ′**<sub>i,j</sub>(X) for each masking row *i* and each parallel constraint *j* (degree ≤ s−1)
+* `sampleRandMatrix` ⇒ **γ′**<sub>i,j</sub> field scalars for the aggregated batch
+
+The degree of **Q** is fixed as *dQ = s + ℓ − 1* with ℓ = 1 (one random evaluation per row) so that Equation (3) of the paper is satisfied.
+
+*Step 5 — building Q*
+A single call to `BuildQ` does the heavy algebra:
+
+```
+Qᵢ(X) = Mᵢ(X)                              ← mask
+       + Σ_j Γ′ᵢ,j(X) · Fpar_j(X)           ← parallel mix
+       + Σ_j γ′ᵢ,j   · Fagg_j(X)            ← aggregated mix
+```
+
+*Step 6 — verifier checks*
+
+1. **Point-wise consistency** of Equation (4) at `testPoint`.
+   The code in `verifyRelationsOnE` converts everything back to coefficient form (one inverse-NTT per poly), evaluates both sides and bails if any row mismatches.
+2. **Σ-at-Ω test** of Equation (7) via `VerifyQ`.
+   It sums each `Qᵢ(ω)` for all ω ∈ Ω in the coefficient domain; a non-zero sum means the prover cheated.
+3. **Merkle integrity** is marked as *true* here because the script is focused on algebra; the Merkle paths are unit-tested in `decs_merkle_test.go`.
+
+A short `transcript` struct stores those booleans plus the important public values (Merkle root, first coefficients of Γ′, hash of the combined Rₖ polynomials, chosen opening set E).
+`prettyPrintTranscript` dumps them in a neat order, so a developer can paste the output into an issue or a log.
+
+---
+
+### Key helpers the simulation re-uses
+
+| helper                    | responsibility                              |
+| ------------------------- | ------------------------------------------- |
+| `BuildWitnessFromDisk`    | rebuild witness exactly like the prover     |
+| `buildFpar` / `buildFagg` | implement the two constraint families       |
+| `BuildMaskPolynomials`    | generate the *Mᵢ* rows satisfying ΣΩ Mᵢ = 0 |
+| `BuildQ`                  | implement Equation (4) verbatim             |
+| `VerifyQ`                 | implement Equation (7) verbatim             |
+
+None of those helpers are changed by the simulation; you therefore exercise the very same paths the library will take in production.
+
+
