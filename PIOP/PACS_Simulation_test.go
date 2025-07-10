@@ -134,14 +134,14 @@ func RunPACSSimulation() bool {
 // -----------------------------------------------------------------------------
 
 func loadPublicTables(r *ring.Ring) (A [][]*ring.Poly, b1, B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly) {
-	pk, _ := signer.LoadPublicKey("public_key/public_key.json")
+	pk, _ := signer.LoadPublicKey("../public_key/public_key.json")
 	A = [][]*ring.Poly{make([]*ring.Poly, len(pk.A))}
 	for i, c := range pk.A {
 		p := r.NewPoly()
 		copy(p.Coeffs[0], c)
 		A[0][i] = p
 	}
-	raw, _ := loadBmatrixCoeffs("Parameters/Bmatrix.json")
+	raw, _ := loadBmatrixCoeffs("../Parameters/Bmatrix.json")
 	toNTT := func(raw []uint64) *ring.Poly { p := r.NewPoly(); copy(p.Coeffs[0], raw); r.NTT(p, p); return p }
 	B0Const = []*ring.Poly{toNTT(raw[0])}
 	B0Msg = [][]*ring.Poly{{toNTT(raw[1])}}
