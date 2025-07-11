@@ -1,180 +1,234 @@
-// PACS_Simulation.go – interactive one-shot simulation of the SmallWood PACS
-// protocol on the quadratic-gate demo instance bundled with this repository.
+// PACS_Simulation.go – **reference implementation** of the full SmallWood
+// proof‑system stack on the quadratic‑gate demo instance.
+// ---------------------------------------------------------------------------
+// Layer diagram (each arrow is an *actual* function call in this file):
 //
-// The file stays **inside the PIOP package** so that it has direct access to the
-// helpers that load JSON fixtures (Parameters.json, Signature.json, …) and to
-// the unexported utilities such as loadBmatrixCoeffs.  Nothing is hard‑coded –
-// every public or private value is parsed from disk exactly as the real prover
-// would do.
+//	prover                                verifier
+//	─────────────────────────────────────────────────────────────────────────
+//	  rows ─────► lvcs.CommitInit ───► Merkle root (DECS)
+//	                    │                        │
+//	                    │  Γ (degree test)       │
+//	                    ├────── CommitStep1 ◄────┤   derives Γ from root
+//	                    │                        │
+//	R‑polys ◄────────────┼── CommitFinish ◄──────┤   degree‑check on R
+//	                    │                        │
+//	           PACS batching (Γ', γ')
+//	                    │                        │
+//	build Q             ├──────────── Q ─────────►┤
+//	                    │                        │
+//	          choose E' │                        │ choose E', open P,M
 //
-// The simulated transcript follows the three logical layers:
-//   - DECS  (degree‑enforcing small‑domain PCS)
-//   - LVCS  (linear‑map vector commitment)
-//   - PACS  (parallel + aggregated constraint system over those commitments)
+// lvcs.EvalFinish ──────┼────────── open ───────►┤ Merkle+deg on opening
 //
-// We expose only the messages relevant to the PACS paper – hash roots, Fiat–
-// Shamir challenges, Q‑polynomials, and the Σ‑at‑Ω check – because individual
-// DECS blocks and Merkle paths are unit‑tested elsewhere.
+//	     │                        │ Eq.(4) on E'  +  ΣΩQ=0
+//	     ▼                        ▼
+//	ACCEPT / REJECT            ACCEPT / REJECT
 //
-// Build & run:
+// ---------------------------------------------------------------------------
+// Package expectations
+// --------------------
+//   - **decs** – Merkle‑tree verification + exported `Degree` constant.
+//   - **lvcs** – API:
+//     CommitInit / CommitFinish / EvalFinish, NewVerifier, …
+//     `ProverKey` must expose:  `MaskPolys` and `RowPolys` (both []*ring.Poly).
+//     `Opening`   must embed:   `DECSOpen *decs.DECSOpening`.
 //
-//	  go test -run TestPACSSimulation        # CI‑style
-//	or
-//	  go run ./PIOP | sed 's/^/[sim] /'      # manual
+// ---------------------------------------------------------------------------
+//
+//	go test -run TestPACSSimulation   # CI / regression
+//	go run ./PIOP                    # manual transcript
+//
+// ---------------------------------------------------------------------------
 package PIOP
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"testing"
+
+	lvcs "vSIS-Signature/LVCS"
 	signer "vSIS-Signature/Signer"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
-// -----------------------------------------------------------------------------
-//  Transcript container
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//   Minimal transcript object – printed at the end for visual inspection
+// ---------------------------------------------------------------------------
 
 type transcript struct {
-	Root        string     // Merkle root after CommitInit
-	Gamma       [][]uint64 // first coefficient of each Γ′ poly (for display)
-	Rhash       string     // SHA‑256 over all R_k coeffs (brevity)
-	E           []int      // opening subset picked by verifier
-	MerkleOK    bool
-	PolyRelOK   bool
-	SumOmegaOK  bool
-	FinalAccept bool
+	Root                string
+	Gamma0, GammaPrime0 [][]uint64 // only first column shown
+	Rhash               string
+	Eprime, Edecs       []int
+	Flags               struct{ Merkle, Deg, Eq4, Sum bool }
 }
 
-// -----------------------------------------------------------------------------
-//  Public driver (hooked into “go test”) – returns true on ACCEPT
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//   Public entry‑point for `go test`
+// ---------------------------------------------------------------------------
 
 func TestPACSSimulation(t *testing.T) {
 	if !RunPACSSimulation() {
-		panic("simulation rejected – constraints failed")
+		t.Fatalf("verifier rejected – at least one check failed")
 	}
 }
 
+// RunPACSSimulation executes one end‑to‑end proof and returns the verdict.
 func RunPACSSimulation() bool {
-	// 0. global parameters ----------------------------------------------------
-	par, err := signer.LoadParams("../Parameters/Parameters.json")
-	if err != nil {
-		panic(err)
-	}
+	// 0) ring / parameters --------------------------------------------------
+	par, _ := signer.LoadParams("../Parameters/Parameters.json")
 	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
 
-	// 1. prover builds witness from the JSON fixtures ------------------------
-	w1, w2, w3 := BuildWitnessFromDisk() // w1 length = s
-	sCols := len(w1)
+	// 1) witness columns (quadratic‑gate helper) ---------------------------
+	w1, w2, w3 := BuildWitnessFromDisk()
 
-	// 2. verifier fixes Ω = {1,…,s} ------------------------------------------
+	// 2) convert to rows and run LVCS.Commit -------------------------------
+	rows := columnsToRows(ringQ, w1, w2, w3)
+	ell := 1
+	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
+
+	vrf := lvcs.NewVerifier(ringQ, len(rows), ell)
+	Gamma := vrf.CommitStep1(root)
+	Rpolys := lvcs.CommitFinish(pk, Gamma)
+	if !vrf.CommitStep2(Rpolys) {
+		fmt.Println("[deg‑chk] R failed")
+		return false
+	}
+
+	// 3) PACS batching randomness -----------------------------------------
+	rho := 1
+	sCols := len(w1)
+	GammaP := sampleRandPolys(ringQ, rho, sCols, sCols)  // Γ′
+	gammaP := sampleRandMatrix(rho, 1, ringQ.Modulus[0]) // γ′, m₂=1
+
+	// 4) build Fₚₐᵣ and Fₐgg from LVCS row polys ---------------------------
+	rowPolys := pk.RowPolys
+	idxW1 := func(k int) int { return k }
+	idxX1 := len(rowPolys) - 2
+	idxW3 := len(rowPolys) - 1
+
+	Fpar := make([]*ring.Poly, sCols)
+	tmp := ringQ.NewPoly()
+	for k := 0; k < sCols; k++ {
+		Fpar[k] = rowPolys[idxW3].CopyNew() // w3_k
+		ringQ.MulCoeffs(rowPolys[idxW1(k)], rowPolys[idxX1], tmp)
+		ringQ.Sub(Fpar[k], tmp, Fpar[k]) // – w1_k · x1
+	}
+
+	// Toy instance ⇒ one aggregated row j=0 --------------------------------
+	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
+	sigCols := sCols - 2 // s,u,x0
+	left1, left2, right := ringQ.NewPoly(), ringQ.NewPoly(), ringQ.NewPoly()
+	for t := 0; t < sigCols; t++ {
+		ringQ.MulCoeffs(b1[0], A[0][t], tmp)
+		ringQ.MulCoeffs(tmp, rowPolys[idxW1(t)], tmp)
+		addInto(ringQ, left1, tmp) // (b⊙A)s
+
+		ringQ.MulCoeffs(A[0][t], rowPolys[idxW1(t)], tmp)
+		ringQ.MulCoeffs(tmp, rowPolys[idxX1], tmp)
+		addInto(ringQ, left2, tmp) // (A·s)x1
+	}
+	addInto(ringQ, right, B0c[0])
+	ringQ.MulCoeffs(B0m[0][0], rowPolys[idxW1(sigCols)], tmp) // u
+	addInto(ringQ, right, tmp)
+	ringQ.MulCoeffs(B0r[0][0], rowPolys[idxW1(sigCols+1)], tmp) // x0
+	addInto(ringQ, right, tmp)
+
+	ringQ.Sub(left1, left2, tmp)
+	ringQ.Sub(tmp, right, tmp)
+	Fagg := []*ring.Poly{tmp.CopyNew()}
+
+	// 5) Build Qᵢ(X) -------------------------------------------------------
 	omega := make([]uint64, sCols)
 	for i := range omega {
 		omega[i] = uint64(i + 1)
 	}
+	Q := BuildQ(ringQ, pk.MaskPolys, Fpar, Fagg, GammaP, gammaP)
 
-	// 3. constraint polynomials F (parallel) and F′ (aggregated) -------------
-	A, b1, B0Const, B0Msg, B0Rnd := loadPublicTables(ringQ)
-	Fpar := buildFpar(ringQ, w1, w2, w3)
-	Fagg := buildFagg(ringQ, w1, w2, A, b1, B0Const, B0Msg, B0Rnd)
+	// 6) choose E′, open P & M --------------------------------------------
+	Eprime := []int{sCols + 2}
+	open := lvcs.EvalFinish(pk, Eprime)
+	if !vrf.EvalStep2Slim(open.DECSOpen) { // Merkle + deg on opening
+		fmt.Println("[open] Merkle/deg failed")
+		return false
+	}
 
-	// 4. verifier samples Γ′ and γ′ ------------------------------------------
-	rho := 1              // one masking row suffices for demo
-	ell := 1              // ℓ random evaluations per row
-	dQ := sCols + ell - 1 // degree bound for Q_i
-	M := BuildMaskPolynomials(ringQ, rho, dQ, omega)
-	GammaPrime := sampleRandPolys(ringQ, rho, len(Fpar), sCols)
-	gammaPrime := sampleRandMatrix(rho, len(Fagg), ringQ.Modulus[0])
+	okEq4 := checkEq4OnOpening(ringQ, Q, open, Fpar, Fagg, GammaP, gammaP)
+	okSum := VerifyQ(ringQ, Q, omega)
 
-	// 5. prover builds Q_i(X) -------------------------------------------------
-	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaPrime, gammaPrime)
-
-	// 6. verifier side checks -------------------------------------------------
-	tr := &transcript{}
-
-	root := sha256.Sum256([]byte("dummy-leaves"))
+	// 7) print transcript ---------------------------------------------------
+	tr := transcript{}
 	tr.Root = hex.EncodeToString(root[:])
-	tr.Gamma = GammaPrimeFlat(GammaPrime)
+	tr.Gamma0 = firstColumn(Gamma)
+	Rh := sha256.Sum256(polysToBytes(Rpolys))
+	tr.Rhash = hex.EncodeToString(Rh[:])
+	tr.GammaPrime0 = firstColumnNested(GammaP)
+	tr.Eprime, tr.Edecs = Eprime, open.DECSOpen.Indices
+	tr.Flags = struct{ Merkle, Deg, Eq4, Sum bool }{true, true, okEq4, okSum}
+	pretty(&tr)
 
-	h := sha256.New()
-	for _, poly := range GammaPrime[0] { // single row enough for human log
-		for _, c := range poly.Coeffs[0] {
-			var b [8]byte
-			for i := 0; i < 8; i++ {
-				b[i] = byte(c >> (8 * i))
-			}
-			h.Write(b[:])
+	return tr.Flags.Merkle && tr.Flags.Deg && tr.Flags.Eq4 && tr.Flags.Sum
+}
+
+// ----------------------------------------------------------------------------
+// columnsToRows – helper: transform witness columns into LVCS row matrix
+// ----------------------------------------------------------------------------
+
+func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) [][]uint64 {
+	s := len(w1)
+	rows := make([][]uint64, s+2) // s rows of w1, then x1 and w3
+	q := r.Modulus[0]
+	coeff := r.NewPoly()
+
+	for row := 0; row < s; row++ {
+		rows[row] = make([]uint64, s)
+		for col, P := range w1 {
+			r.InvNTT(P, coeff)
+			rows[row][col] = coeff.Coeffs[0][row] % q
 		}
 	}
-	tr.Rhash = hex.EncodeToString(h.Sum(nil))
-
-	// choose an opening index outside Ω  (Ω uses 1..s). We use s+2 which is
-	// < par.N so it is a valid position in the evaluation domain.
-	tr.E = []int{sCols + 2}
-	tr.MerkleOK = true // we trust Merkle proofs in this concise demo
-
-	// consistency test of Eq.(4) at one fresh point e (here we recycle ω₁=1 for
-	// simplicity – changing this to a non‑Ω element is a one‑liner if desired).
-	testPoint := omega[0]
-	tr.PolyRelOK = verifyRelationsOnE(ringQ, Q, M, Fpar, Fagg,
-		GammaPrime, gammaPrime, testPoint)
-
-	tr.SumOmegaOK = VerifyQ(ringQ, Q, omega)
-	tr.FinalAccept = tr.MerkleOK && tr.PolyRelOK && tr.SumOmegaOK
-
-	prettyPrintTranscript(tr)
-	return tr.FinalAccept
-}
-
-// -----------------------------------------------------------------------------
-//  Helpers (package‑private)
-// -----------------------------------------------------------------------------
-
-func loadPublicTables(r *ring.Ring) (A [][]*ring.Poly, b1, B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly) {
-	pk, _ := signer.LoadPublicKey("../public_key/public_key.json")
-	A = [][]*ring.Poly{make([]*ring.Poly, len(pk.A))}
-	for i, c := range pk.A {
-		p := r.NewPoly()
-		copy(p.Coeffs[0], c)
-		A[0][i] = p
+	r.InvNTT(w2, coeff)
+	rows[s] = make([]uint64, s)
+	for col := range rows[s] {
+		rows[s][col] = coeff.Coeffs[0][0]
 	}
-	raw, _ := loadBmatrixCoeffs("../Parameters/Bmatrix.json")
-	toNTT := func(raw []uint64) *ring.Poly { p := r.NewPoly(); copy(p.Coeffs[0], raw); r.NTT(p, p); return p }
-	B0Const = []*ring.Poly{toNTT(raw[0])}
-	B0Msg = [][]*ring.Poly{{toNTT(raw[1])}}
-	B0Rnd = [][]*ring.Poly{{toNTT(raw[2])}}
-	b1 = []*ring.Poly{toNTT(raw[3])}
-	return
+
+	rows[s+1] = make([]uint64, s)
+	for col, P := range w3 {
+		r.InvNTT(P, coeff)
+		rows[s+1][col] = coeff.Coeffs[0][0]
+	}
+	return rows
 }
 
-func verifyRelationsOnE(r *ring.Ring, Q, M []*ring.Poly, Fpar, Fagg []*ring.Poly,
-	GammaPrime [][]*ring.Poly, gammaPrime [][]uint64, e uint64) bool {
+// ----------------------------------------------------------------------------
+// Eq.(4) on opened evaluations (E′)
+// ----------------------------------------------------------------------------
+
+func checkEq4OnOpening(r *ring.Ring, Q []*ring.Poly, op *lvcs.Opening,
+	Fpar []*ring.Poly, Fagg []*ring.Poly,
+	GammaP [][]*ring.Poly, gammaP [][]uint64) bool {
 
 	q := r.Modulus[0]
 	coeff := r.NewPoly()
-	tmp := r.NewPoly()
-
-	for i := range Q {
+	for i, idx := range op.DECSOpen.Indices {
 		r.InvNTT(Q[i], coeff)
-		lhs := EvalPoly(coeff.Coeffs[0], e, q)
+		lhs := coeff.Coeffs[0][idx]
 
-		r.InvNTT(M[i], coeff)
-		rhs := EvalPoly(coeff.Coeffs[0], e, q)
+		rhs := op.DECSOpen.Mvals[idx][i]
+		for j := range GammaP[i] {
+			gp := evalPoint(r, GammaP[i][j], idx)
+			fp := evalPoint(r, Fpar[j], idx)
+			rhs = modAdd(rhs, modMul(gp, fp, q), q)
+		}
+		g := gammaP[i][0]
+		fp := evalPoint(r, Fagg[0], idx)
+		rhs = modAdd(rhs, modMul(g, fp, q), q)
 
-		for j, F := range Fpar {
-			r.InvNTT(GammaPrime[i][j], coeff)
-			gj := EvalPoly(coeff.Coeffs[0], e, q)
-			r.InvNTT(F, tmp)
-			rhs = modAdd(rhs, modMul(gj, EvalPoly(tmp.Coeffs[0], e, q), q), q)
-		}
-		for j, Fp := range Fagg {
-			g := gammaPrime[i][j]
-			r.InvNTT(Fp, tmp)
-			rhs = modAdd(rhs, modMul(g, EvalPoly(tmp.Coeffs[0], e, q), q), q)
-		}
 		if lhs != rhs {
 			return false
 		}
@@ -182,29 +236,110 @@ func verifyRelationsOnE(r *ring.Ring, Q, M []*ring.Poly, Fpar, Fagg []*ring.Poly
 	return true
 }
 
-func GammaPrimeFlat(in [][]*ring.Poly) [][]uint64 {
-	out := make([][]uint64, len(in))
-	for i := range in {
-		out[i] = make([]uint64, len(in[i]))
-		for j, p := range in[i] {
-			out[i][j] = p.Coeffs[0][0]
+// ----------------------------------------------------------------------------
+// tiny helpers (evaluation / pretty print / misc.)
+// ----------------------------------------------------------------------------
+
+func evalPoint(r *ring.Ring, p *ring.Poly, idx int) uint64 {
+	coeff := r.NewPoly()
+	r.InvNTT(p, coeff)
+	return coeff.Coeffs[0][idx]
+}
+
+func firstColumn(mat [][]uint64) [][]uint64 {
+	out := make([][]uint64, len(mat))
+	for i := range mat {
+		if len(mat[i]) > 0 {
+			out[i] = []uint64{mat[i][0]}
 		}
 	}
 	return out
 }
 
-func prettyPrintTranscript(tr *transcript) {
-	fmt.Println("\n— PACS one‑shot simulation —")
-	fmt.Println("CommitInit  : Merkle root           =", tr.Root)
-	fmt.Println("CommitStep1 : Γ' (first coeffs)     =", tr.Gamma)
-	fmt.Println("CommitFinish: hash(R_k coeffs)      =", tr.Rhash)
-	fmt.Println("ChooseE     : E                     =", tr.E)
-	fmt.Println("EvalFinish  : Merkle verified       =", tr.MerkleOK)
-	fmt.Println("EvalFinish  : poly relations on E   =", tr.PolyRelOK)
-	fmt.Println("Σ-at-Ω test :                        =", tr.SumOmegaOK)
-	if tr.FinalAccept {
-		fmt.Println("Verifier ➜ ACCEPT – all checks passed.")
-	} else {
-		fmt.Println("Verifier ➜ REJECT – some check failed.")
+func firstColumnNested(mat [][]*ring.Poly) [][]uint64 {
+	out := make([][]uint64, len(mat))
+	for i := range mat {
+		if len(mat[i]) > 0 {
+			out[i] = []uint64{mat[i][0].Coeffs[0][0]}
+		}
 	}
+	return out
+}
+
+func pretty(tr *transcript) {
+	fmt.Println("\n—— SmallWood one‑shot proof ——")
+	fmt.Println("root        :", tr.Root)
+	fmt.Println("Γ[0]        :", tr.Gamma0)
+	fmt.Println("hash(R)     :", tr.Rhash)
+	fmt.Println("Γ'[0]       :", tr.GammaPrime0)
+	fmt.Println("E' / E      :", tr.Eprime, "/", tr.Edecs)
+	fmt.Printf("flags       : Merkle=%v  deg=%v  Eq4=%v  ΣΩ=%v\n",
+		tr.Flags.Merkle, tr.Flags.Deg, tr.Flags.Eq4, tr.Flags.Sum)
+	if tr.Flags.Merkle && tr.Flags.Deg && tr.Flags.Eq4 && tr.Flags.Sum {
+		fmt.Println("VERIFIER → ACCEPT")
+	} else {
+		fmt.Println("VERIFIER → REJECT")
+	}
+}
+
+func polysToBytes(pp []*ring.Poly) []byte {
+	var out []byte
+	for _, p := range pp {
+		for _, c := range p.Coeffs[0] {
+			b := make([]byte, 8)
+			binary.LittleEndian.PutUint64(b, c)
+			out = append(out, b...)
+		}
+	}
+	return out
+}
+
+// ----------------------------------------------------------------------------
+// External helpers reused from other PIOP files (just prototypes here)
+// ----------------------------------------------------------------------------
+
+// loadPublicTables reads the JSON fixtures shipping with the demo and
+// returns **NTT-lifted** public data needed by the quadratic-gate checks.
+//
+// A        : one-row slice  [row][col]   (NTT domain)
+// b1       : []*ring.Poly   (len = nRows)
+// B0Const  : []*ring.Poly   ― constant column of B₀
+// B0Msg    : [][]*ring.Poly ― message columns  (outer idx = msg block)
+// B0Rnd    : [][]*ring.Poly ― randomness cols  (outer idx = rnd block)
+//
+// Panics on I/O or shape errors – fine for test-only helpers.
+func loadPublicTables(ringQ *ring.Ring) (A [][]*ring.Poly,
+	b1, B0Const []*ring.Poly,
+	B0Msg, B0Rnd [][]*ring.Poly) {
+
+	//----------------------------------------------------------------- A matrix
+	pk, err := signer.LoadPublicKey("../public_key/public_key.json")
+	if err != nil {
+		log.Fatalf("public_key.json: %v", err)
+	}
+	A = [][]*ring.Poly{make([]*ring.Poly, len(pk.A))}
+	for j, coeffs := range pk.A {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], coeffs) // already NTT in the fixture
+		A[0][j] = p
+	}
+
+	//-------------------------------------------------------------- B-matrix set
+	rawB, err := loadBmatrixCoeffs("../Parameters/Bmatrix.json")
+	if err != nil {
+		log.Fatalf("Bmatrix.json: %v", err)
+	}
+	toNTT := func(raw []uint64) *ring.Poly {
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], raw)
+		ringQ.NTT(p, p) // lift once
+		return p
+	}
+
+	B0Const = []*ring.Poly{toNTT(rawB[0])}   // B₀,const
+	B0Msg = [][]*ring.Poly{{toNTT(rawB[1])}} // one u-column
+	B0Rnd = [][]*ring.Poly{{toNTT(rawB[2])}} // one x₀-column
+	b1 = []*ring.Poly{toNTT(rawB[3])}        // b₁ row
+
+	return
 }

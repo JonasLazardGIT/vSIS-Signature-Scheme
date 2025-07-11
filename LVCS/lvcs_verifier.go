@@ -26,15 +26,34 @@ func NewVerifier(ringQ *ring.Ring, r, eta int) *VerifierState {
 
 // CommitStep1 – §4.1 steps 1–3:
 // Commit all those polynomials via DECS and record the commitment root.
-func (v *VerifierState) CommitStep1(root [32]byte) {
+func (v *VerifierState) CommitStep1(root [32]byte) [][]uint64 {
 	v.Root = root
 	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
-	v.Gamma = decv.DeriveGamma(root) // <- fixed: use DeriveGamma on Verifier, not decs.DeriveGamma
+	v.Gamma = decv.DeriveGamma(root)
+	return v.Gamma
 }
 
 // CommitStep2 stores the prover's R_k polynomials.
-func (v *VerifierState) CommitStep2(R []*ring.Poly) {
+func (v *VerifierState) CommitStep2(R []*ring.Poly) bool {
 	v.R = R
+	for _, p := range R {
+		// quick degree bound using coeff-form length
+		if deg(p) > decs.Degree {
+			return false
+		}
+	}
+	return true
+}
+
+// tiny local helper
+func deg(p *ring.Poly) int {
+	c := p.Coeffs[0]
+	for i := len(c) - 1; i >= 0; i-- {
+		if c[i] != 0 {
+			return i
+		}
+	}
+	return 0
 }
 
 // ChooseE – §4.1 step 3:
@@ -47,6 +66,13 @@ func (v *VerifierState) ChooseE(ell int) []int {
 		E[i] = rnd.Intn(N)
 	}
 	return E
+}
+
+// *simplified* verifier: only Merkle + degree test (bar / C not needed
+// by the current one-shot simulation).
+func (v *VerifierState) EvalStep2Slim(open *decs.DECSOpening) bool {
+	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
+	return decv.VerifyEval(v.Root, v.Gamma, v.R, open)
 }
 
 // EvalStep2 – §4.1 step 4:

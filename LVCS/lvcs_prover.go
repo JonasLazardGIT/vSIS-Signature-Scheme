@@ -18,9 +18,11 @@ type ProverKey struct {
 	RingQ      *ring.Ring   // so we can grab q later without touching unexported decs.Prover.ringQ
 	DecsProver *decs.Prover // underlying DECS prover
 
-	RowData  [][]uint64 // original r_j
-	MaskData [][]uint64 // random ̄r_j
-	Gamma    [][]uint64
+	RowData   [][]uint64   // r_j  (plain rows – never leaked)
+	MaskData  [][]uint64   // \bar r_j
+	MaskPolys []*ring.Poly // the η=ℓ′ mask-polynomials  M_i(X)  (NTT domain)
+	RowPolys  []*ring.Poly // one polynomial per *row*
+	Gamma     [][]uint64   // gamma values for the prover
 }
 
 // CommitInit – §4.1 steps 1–2:
@@ -57,18 +59,35 @@ func CommitInit(
 		}
 	}
 
-	// 2) DECS.CommitInit
+	// 2) DECS.CommitInit  (keeps P_j in coeff-form; we keep a *copy*
+	//    in NTT domain for the PACS layer → RowPolys)
 	dprover := decs.NewProver(ringQ, polys)
 	if root, err = dprover.CommitInit(); err != nil {
 		return
 	}
 	Gamma := decs.DeriveGamma(root, decs.Eta, nrows)
 
+	// lift P_j to NTT for later reuse
+	rowsNTT := make([]*ring.Poly, nrows)
+	for j := range polys {
+		rowsNTT[j] = ringQ.NewPoly()
+		ringQ.NTT(polys[j], rowsNTT[j])
+	}
+
+	// the DECS masks are already in coeff-form inside dprover.M – take a
+	// *reference* so PACS can build Q without poking into the DECS package.
+	masksNTT := make([]*ring.Poly, decs.Eta)
+	for i := 0; i < decs.Eta; i++ {
+		masksNTT[i] = ringQ.NewPoly()
+		ringQ.NTT(dprover.M[i], masksNTT[i])
+	}
 	prover = &ProverKey{
 		RingQ:      ringQ,
 		DecsProver: dprover,
 		RowData:    rows,
 		MaskData:   masks,
+		RowPolys:   rowsNTT,
+		MaskPolys:  masksNTT,
 		Gamma:      Gamma,
 	}
 	return
