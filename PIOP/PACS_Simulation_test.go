@@ -49,6 +49,7 @@ import (
 	"log"
 	"testing"
 
+	decs "vSIS-Signature/DECS"
 	lvcs "vSIS-Signature/LVCS"
 	signer "vSIS-Signature/Signer"
 
@@ -91,7 +92,7 @@ func RunPACSSimulation() bool {
 	ell := 1
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
 
-	vrf := lvcs.NewVerifier(ringQ, len(rows), ell)
+	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta)
 	Gamma := vrf.CommitStep1(root)
 	Rpolys := lvcs.CommitFinish(pk, Gamma)
 	if !vrf.CommitStep2(Rpolys) {
@@ -105,50 +106,21 @@ func RunPACSSimulation() bool {
 	GammaP := sampleRandPolys(ringQ, rho, sCols, sCols)  // Γ′
 	gammaP := sampleRandMatrix(rho, 1, ringQ.Modulus[0]) // γ′, m₂=1
 
-	// 4) build Fₚₐᵣ and Fₐgg from LVCS row polys ---------------------------
-	rowPolys := pk.RowPolys
-	idxW1 := func(k int) int { return k }
-	idxX1 := len(rowPolys) - 2
-	idxW3 := len(rowPolys) - 1
+	// 4) build Fₚₐᵣ and Fₐgg from witness columns
+	Fpar := buildFpar(ringQ, w1, w2, w3)
 
-	Fpar := make([]*ring.Poly, sCols)
-	tmp := ringQ.NewPoly()
-	for k := 0; k < sCols; k++ {
-		Fpar[k] = rowPolys[idxW3].CopyNew() // w3_k
-		ringQ.MulCoeffs(rowPolys[idxW1(k)], rowPolys[idxX1], tmp)
-		ringQ.Sub(Fpar[k], tmp, Fpar[k]) // – w1_k · x1
-	}
-
-	// Toy instance ⇒ one aggregated row j=0 --------------------------------
+	// Toy instance ⇒ one aggregated row j=0
 	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
-	sigCols := sCols - 2 // s,u,x0
-	left1, left2, right := ringQ.NewPoly(), ringQ.NewPoly(), ringQ.NewPoly()
-	for t := 0; t < sigCols; t++ {
-		ringQ.MulCoeffs(b1[0], A[0][t], tmp)
-		ringQ.MulCoeffs(tmp, rowPolys[idxW1(t)], tmp)
-		addInto(ringQ, left1, tmp) // (b⊙A)s
-
-		ringQ.MulCoeffs(A[0][t], rowPolys[idxW1(t)], tmp)
-		ringQ.MulCoeffs(tmp, rowPolys[idxX1], tmp)
-		addInto(ringQ, left2, tmp) // (A·s)x1
-	}
-	addInto(ringQ, right, B0c[0])
-	ringQ.MulCoeffs(B0m[0][0], rowPolys[idxW1(sigCols)], tmp) // u
-	addInto(ringQ, right, tmp)
-	ringQ.MulCoeffs(B0r[0][0], rowPolys[idxW1(sigCols+1)], tmp) // x0
-	addInto(ringQ, right, tmp)
-
-	ringQ.Sub(left1, left2, tmp)
-	ringQ.Sub(tmp, right, tmp)
-	Fagg := []*ring.Poly{tmp.CopyNew()}
-
+	Fagg := buildFagg(ringQ, w1, w2, A, b1, B0c, B0m, B0r)
 	// 5) Build Qᵢ(X) -------------------------------------------------------
 	omega := make([]uint64, sCols)
 	for i := range omega {
 		omega[i] = uint64(i + 1)
 	}
-	Q := BuildQ(ringQ, pk.MaskPolys, Fpar, Fagg, GammaP, gammaP)
 
+	dQ := sCols + ell - 1
+	M := BuildMaskPolynomials(ringQ, rho, dQ, omega)
+	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
 	// 6) choose E′, open P & M --------------------------------------------
 	Eprime := []int{sCols + 2}
 	open := lvcs.EvalFinish(pk, Eprime)
@@ -157,7 +129,7 @@ func RunPACSSimulation() bool {
 		return false
 	}
 
-	okEq4 := checkEq4OnOpening(ringQ, Q, open, Fpar, Fagg, GammaP, gammaP)
+	okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP)
 	okSum := VerifyQ(ringQ, Q, omega)
 
 	// 7) print transcript ---------------------------------------------------
@@ -209,7 +181,7 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 // Eq.(4) on opened evaluations (E′)
 // ----------------------------------------------------------------------------
 
-func checkEq4OnOpening(r *ring.Ring, Q []*ring.Poly, op *lvcs.Opening,
+func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 	Fpar []*ring.Poly, Fagg []*ring.Poly,
 	GammaP [][]*ring.Poly, gammaP [][]uint64) bool {
 
@@ -218,8 +190,7 @@ func checkEq4OnOpening(r *ring.Ring, Q []*ring.Poly, op *lvcs.Opening,
 	for i, idx := range op.DECSOpen.Indices {
 		r.InvNTT(Q[i], coeff)
 		lhs := coeff.Coeffs[0][idx]
-
-		rhs := op.DECSOpen.Mvals[idx][i]
+		rhs := evalPoint(r, M[i], idx)
 		for j := range GammaP[i] {
 			gp := evalPoint(r, GammaP[i][j], idx)
 			fp := evalPoint(r, Fpar[j], idx)
