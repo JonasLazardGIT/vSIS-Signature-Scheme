@@ -61,8 +61,8 @@ func RunPACSSimulation() bool {
 	w1, w2, w3 := BuildWitnessFromDisk() // helper in another PIOP file
 
 	// ---------------------------------------------------------- LVCS.Commit
-	rows := columnsToRows(ringQ, w1, w2, w3)
 	ell := 1 // exactly one mask coordinate per row
+	rows := columnsToRows(ringQ, w1, w2, w3, ell)
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
 
 	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta)
@@ -132,29 +132,39 @@ func RunPACSSimulation() bool {
 // Helpers (unchanged or lightly patched)
 // ============================================================================
 
-func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) [][]uint64 {
+func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly, ell int) [][]uint64 {
 	s := len(w1)
+	ncols := r.N - ell
 	rows := make([][]uint64, s+2) // s rows of w1, then x1 and w3
 	q := r.Modulus[0]
 	coeff := r.NewPoly()
 
 	for row := 0; row < s; row++ {
-		rows[row] = make([]uint64, s)
+		rows[row] = make([]uint64, ncols)
 		for col, P := range w1 {
 			r.InvNTT(P, coeff)
 			rows[row][col] = coeff.Coeffs[0][row] % q
 		}
+		for col := s; col < ncols; col++ {
+			rows[row][col] = 0
+		}
 	}
+
 	r.InvNTT(w2, coeff)
-	rows[s] = make([]uint64, s)
-	for col := range rows[s] {
+	rows[s] = make([]uint64, ncols)
+	for col := 0; col < ncols; col++ {
 		rows[s][col] = coeff.Coeffs[0][0]
 	}
-	rows[s+1] = make([]uint64, s)
+
+	rows[s+1] = make([]uint64, ncols)
 	for col, P := range w3 {
 		r.InvNTT(P, coeff)
 		rows[s+1][col] = coeff.Coeffs[0][0]
 	}
+	for col := s; col < ncols; col++ {
+		rows[s+1][col] = 0
+	}
+
 	return rows
 }
 
