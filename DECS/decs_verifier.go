@@ -22,8 +22,16 @@ func (v *Verifier) DeriveGamma(root [32]byte) [][]uint64 {
 	return DeriveGamma(root, v.eta, v.r)
 }
 
-// VerifyCommit is a no-op here.
+// VerifyCommit checks deg R_k <= Degree (DECS §3 Step 3).
 func (v *Verifier) VerifyCommit(root [32]byte, R []*ring.Poly, Gamma [][]uint64) bool {
+	for _, p := range R {
+		coeffs := p.Coeffs[0] // coeff domain
+		for i := Degree + 1; i < len(coeffs); i++ {
+			if coeffs[i] != 0 {
+				return false // degree too large
+			}
+		}
+	}
 	return true
 }
 
