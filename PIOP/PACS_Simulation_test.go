@@ -129,7 +129,7 @@ func RunPACSSimulation() bool {
 }
 
 // ============================================================================
-// Helpers (unchanged or lightly patched)
+// Helpers
 // ============================================================================
 
 func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly, ell int) [][]uint64 {
@@ -195,7 +195,7 @@ func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 	return true
 }
 
-// ------- small utilities (unchanged) ---------------------------------------
+// ------- small utilities  ---------------------------------------
 func evalPoint(r *ring.Ring, p *ring.Poly, idx int) uint64 {
 	c := r.NewPoly()
 	r.InvNTT(p, c)

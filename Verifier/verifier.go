@@ -125,29 +125,52 @@ func Verify() bool {
 		return false
 	}
 
-	// // 12) norm bound
-	// var sumSq float64
-	// for i, p := range SEval {
-	// 	coef := ringQ.NewPoly()
-	// 	ringQ.InvNTT(p, coef)
-	// 	for j, c := range coef.Coeffs[0] {
-	// 		var v int64
-	// 		if c > pp.Q/2 {
-	// 			v = int64(c) - int64(pp.Q)
-	// 		} else {
-	// 			v = int64(c)
-	// 		}
-	// 		sumSq += float64(v * v)
-	// 		if sumSq > pp.Bound*pp.Bound {
-	// 			log.Printf("❌ norm-check failed: partial norm²=%.2f > bound²=%.2f at s[%d][%d]", sumSq, pp.Bound*pp.Bound, i, j)
-	// 			return false
-	// 		}
-	// 	}
-	// }
-	// if math.Sqrt(sumSq) > pp.Bound {
-	// 	log.Printf("❌ norm-check failed: ‖s‖=%.2f > %.2f", math.Sqrt(sumSq), pp.Bound)
-	// 	return false
-	// }
+	// ---------------- 12) ℓ∞ – inside  **and**  ℓ∞ – outside ----------------
+	var globalMax int64 // =  ‖S‖_∞  over all rows
+
+	for i, p := range SEval {
+		coef := ringQ.NewPoly()
+		ringQ.InvNTT(p, coef) // back to coefficients
+
+		// ---- row‑wise ℓ∞ ------------------------------------------------------
+		var rowMax int64
+		for _, c := range coef.Coeffs[0] {
+			// centre the coefficient in (−q/2, q/2]
+			var v int64
+			if c > pp.Q/2 {
+				v = int64(c) - int64(pp.Q)
+			} else {
+				v = int64(c)
+			}
+			if vv := abs64(v); vv > rowMax {
+				rowMax = vv
+			}
+		}
+
+		// ---- row bound check:  ‖S_i‖_∞ ≤ q ------------------------------------
+		if rowMax > int64(pp.Q) {
+			log.Printf("❌ ℓ∞‑row bound failed: ‖s[%d]‖_∞ = %d > q = %d",
+				i, rowMax, pp.Q)
+			return false
+		}
+
+		// ---- update global max -------------------------------------------------
+		if rowMax > globalMax {
+			globalMax = rowMax
+		}
+	}
+
+	// ---- global bound check:  ‖S‖_∞ ≤ q ---------------------------------------
+	if globalMax > int64(pp.Q) {
+		log.Printf("❌ ℓ∞‑global bound failed: ‖s‖_∞ = %d > q = %d",
+			globalMax, pp.Q)
+		return false
+	}
+
+	log.Printf("✅ norm check passed: ‖s‖_∞ = %d  (row max %d) ≤ q = %d",
+		globalMax, globalMax, pp.Q)
+
+	// ---------------------------------------------------------------------------
 
 	log.Println("✅ signature valid")
 	return true
@@ -187,6 +210,14 @@ func loadSignature(path string) (*SignatureData, error) {
 		return nil, err
 	}
 	return &sd, nil
+}
+
+// tiny helper
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // ----------------------------------------------------------------------------
