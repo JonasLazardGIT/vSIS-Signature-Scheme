@@ -222,7 +222,7 @@ func BuildWitness(
 func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 
 	// ‣ 0. parameters ----------------------------------------------------------
-	par, _ := signer.LoadParams("../Parameters/Parameters.json")
+	par, _ := signer.LoadParams("Parameters/Parameters.json")
 
 	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
 
@@ -230,7 +230,7 @@ func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 	toNTT := func(p *ring.Poly) { ringQ.NTT(p, p) }
 
 	// ‣ 1. matrix A  (already stored in NTT, **do not** touch) -----------------
-	pk, _ := signer.LoadPublicKey("../public_key/public_key.json")
+	pk, _ := signer.LoadPublicKey("public_key/public_key.json")
 
 	A := make([][]*ring.Poly, 1)
 	A[0] = make([]*ring.Poly, len(pk.A))
@@ -241,7 +241,7 @@ func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 	}
 
 	// ‣ 2. B-matrix columns  (stored in coefficient domain → lift) -------------
-	Bcoeffs, _ := loadBmatrixCoeffs("../Parameters/Bmatrix.json")
+	Bcoeffs, _ := loadBmatrixCoeffs("Parameters/Bmatrix.json")
 
 	B0Const := make([]*ring.Poly, 1)
 	B0Msg := [][]*ring.Poly{make([]*ring.Poly, 1)}
@@ -268,7 +268,7 @@ func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
 	rho[0] = uint64(rbuf[0]) % par.Q // small is fine
 
 	// ‣ 4. signature blobs -----------------------------------------------------
-	sig, _ := loadSignature("../Signature/Signature.json")
+	sig, _ := loadSignature("Signature/Signature.json")
 
 	// message  u   and masks  x₀, x₁  – stored in coeff domain → lift
 	m := makePolyNTT(sig.Message)
