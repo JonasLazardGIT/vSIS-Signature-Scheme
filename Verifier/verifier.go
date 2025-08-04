@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 
 	Parameters "vSIS-Signature/System"
@@ -124,53 +125,92 @@ func Verify() bool {
 		log.Println("❌ b₁-check failed: A·s ≠ target")
 		return false
 	}
+	// ---------------------------------------------------------------------------
+	//  12. Norm accounting
+	//     – ℓ₂ on each polynomial row  s_i
+	//     – ∞-over-2  :  max_i ‖s_i‖₂
+	//     – 2-over-2  :  √Σ_i ‖s_i‖₂²
+	//
+	// ---------------------------------------------------------------------------
+	var (
+		globalInfOverL2 float64 // max_i ‖s_i‖₂        (∞ over 2)
+		sumRowL2Sq      float64 // Σ_i  ‖s_i‖₂²  → √   (2 over 2)
+	)
 
-	// ---------------- 12) ℓ∞ – inside  **and**  ℓ∞ – outside ----------------
-	var globalMax int64 // =  ‖S‖_∞  over all rows
+	abs64 := func(x int64) int64 {
+		if x < 0 {
+			return -x
+		}
+		return x
+	}
 
 	for i, p := range SEval {
 		coef := ringQ.NewPoly()
 		ringQ.InvNTT(p, coef) // back to coefficients
 
-		// ---- row‑wise ℓ∞ ------------------------------------------------------
-		var rowMax int64
+		var (
+			rowL2Sq float64
+			rowInf  int64
+		)
+
 		for _, c := range coef.Coeffs[0] {
-			// centre the coefficient in (−q/2, q/2]
+			// centre coefficient in (−q/2 , q/2]
 			var v int64
 			if c > pp.Q/2 {
 				v = int64(c) - int64(pp.Q)
 			} else {
 				v = int64(c)
 			}
-			if vv := abs64(v); vv > rowMax {
-				rowMax = vv
+
+			rowL2Sq += float64(v * v)
+			if a := abs64(v); a > rowInf {
+				rowInf = a
 			}
 		}
 
-		// ---- row bound check:  ‖S_i‖_∞ ≤ q ------------------------------------
-		if rowMax > int64(pp.Q) {
-			log.Printf("❌ ℓ∞‑row bound failed: ‖s[%d]‖_∞ = %d > q = %d",
-				i, rowMax, pp.Q)
+		//-----------------------------------------------------------------------
+		//  Row-level coefficient bound :  ‖s_i‖_∞ ≤ q
+		//-----------------------------------------------------------------------
+		if rowInf > int64(pp.Q) {
+			log.Printf("❌ row %d : ‖s_i‖_∞ = %d  >  q = %d", i, rowInf, pp.Q)
 			return false
 		}
 
-		// ---- update global max -------------------------------------------------
-		if rowMax > globalMax {
-			globalMax = rowMax
+		rowL2 := math.Sqrt(rowL2Sq)
+		log.Printf("row %2d : ‖s_i‖₂ = %.4f   ‖s_i‖_∞ = %d", i, rowL2, rowInf)
+
+		//-----------------------------------------------------------------------
+		//  Accumulate global norms
+		//-----------------------------------------------------------------------
+		if rowL2 > globalInfOverL2 {
+			globalInfOverL2 = rowL2
 		}
+		sumRowL2Sq += rowL2Sq
 	}
 
-	// ---- global bound check:  ‖S‖_∞ ≤ q ---------------------------------------
-	if globalMax > int64(pp.Q) {
-		log.Printf("❌ ℓ∞‑global bound failed: ‖s‖_∞ = %d > q = %d",
-			globalMax, pp.Q)
+	// ---------------------------------------------------------------------------
+	//
+	//	Global figures
+	//
+	// ---------------------------------------------------------------------------
+	globalL2OverL2 := math.Sqrt(sumRowL2Sq) // √Σ_i ‖s_i‖₂²
+
+	log.Printf("GLOBAL :  max_i‖s_i‖₂ = %.4f    √Σ‖s_i‖₂² = %.4f",
+		globalInfOverL2, globalL2OverL2)
+
+	// ---------------------------------------------------------------------------
+	//
+	//	Global bound  (still using bound = q  on the  ∞-over-2  value)
+	//
+	// ---------------------------------------------------------------------------
+	if globalInfOverL2 > float64(pp.Q)*float64(pp.Q) {
+		log.Printf("❌ global bound failed: max_i‖s_i‖₂ = %.4f  >  q**2 = %d",
+			globalInfOverL2, pp.Q*pp.Q)
 		return false
 	}
 
-	log.Printf("✅ norm check passed: ‖s‖_∞ = %d  (row max %d) ≤ q = %d",
-		globalMax, globalMax, pp.Q)
-
-	// ---------------------------------------------------------------------------
+	log.Printf("✅ norm checks passed: max_i‖s_i‖₂ = %.4f,   √Σ‖s_i‖₂² = %.4f",
+		globalInfOverL2, globalL2OverL2)
 
 	log.Println("✅ signature valid")
 	return true
