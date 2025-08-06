@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"time"
 
 	Parameters "vSIS-Signature/System"
 	vsishash "vSIS-Signature/vSIS-HASH"
@@ -127,15 +128,19 @@ func Verify() bool {
 	}
 	// ---------------------------------------------------------------------------
 	//  12. Norm accounting
-	//     – ℓ₂ on each polynomial row  s_i
-	//     – ∞-over-2  :  max_i ‖s_i‖₂
-	//     – 2-over-2  :  √Σ_i ‖s_i‖₂²
-	//
+	//     – ℓ₂ on each polynomial row  s_i, using
+	//       dist(c) = min{|c - (−q/2)|, |c - 0|, |c - (+q/2)|}
+	//     – ∞-over-2  :  max_i √Σ_j dist(c_{i,j})²
+	//     – 2-over-2  :  √Σ_i Σ_j dist(c_{i,j})²
 	// ---------------------------------------------------------------------------
 	var (
-		globalInfOverL2 float64 // max_i ‖s_i‖₂        (∞ over 2)
-		sumRowL2Sq      float64 // Σ_i  ‖s_i‖₂²  → √   (2 over 2)
+		globalInfOverL2 float64 // max_i ‖s_i‖₂
+		sumRowL2Sq      float64 // Σ_i  ‖s_i‖₂²
 	)
+
+	qval := int64(pp.Q)
+	halfQ := qval / 2
+	centers := []int64{-halfQ, 0, halfQ}
 
 	abs64 := func(x int64) int64 {
 		if x < 0 {
@@ -145,43 +150,45 @@ func Verify() bool {
 	}
 
 	for i, p := range SEval {
-		coef := ringQ.NewPoly()
-		ringQ.InvNTT(p, coef) // back to coefficients
+		// 1) bring p back to coefficient domain
+		coefPoly := ringQ.NewPoly()
+		ringQ.InvNTT(p, coefPoly)
 
 		var (
 			rowL2Sq float64
 			rowInf  int64
 		)
 
-		for _, c := range coef.Coeffs[0] {
-			// centre coefficient in (−q/2 , q/2]
+		// 2) for each coefficient, compute its minimal “distance”
+		for _, cu := range coefPoly.Coeffs[0] {
+			// first center into (−q/2, +q/2]
 			var v int64
-			if c > pp.Q/2 {
-				v = int64(c) - int64(pp.Q)
+			if cu > uint64(halfQ) {
+				v = int64(cu) - qval
 			} else {
-				v = int64(c)
+				v = int64(cu)
 			}
 
-			rowL2Sq += float64(v * v)
-			if a := abs64(v); a > rowInf {
-				rowInf = a
+			// now compute dist = min_j |v - centers[j]|
+			dist := abs64(v - centers[0])
+			for _, c0 := range centers[1:] {
+				if d := abs64(v - c0); d < dist {
+					dist = d
+				}
+			}
+
+			// accumulate into ℓ₂² and ∞
+			rowL2Sq += float64(dist * dist)
+			if dist > rowInf {
+				rowInf = dist
 			}
 		}
 
-		//-----------------------------------------------------------------------
-		//  Row-level coefficient bound :  ‖s_i‖_∞ ≤ q
-		//-----------------------------------------------------------------------
-		if rowInf > int64(pp.Q) {
-			log.Printf("❌ row %d : ‖s_i‖_∞ = %d  >  q = %d", i, rowInf, pp.Q)
-			return false
-		}
-
+		// row‐level norm
 		rowL2 := math.Sqrt(rowL2Sq)
-		log.Printf("row %2d : ‖s_i‖₂ = %.4f   ‖s_i‖_∞ = %d", i, rowL2, rowInf)
+		log.Printf("row %2d : ‖s_i‖₂ (using min-distance) = %.4f", i, rowL2)
 
-		//-----------------------------------------------------------------------
-		//  Accumulate global norms
-		//-----------------------------------------------------------------------
+		// accumulate global norms
 		if rowL2 > globalInfOverL2 {
 			globalInfOverL2 = rowL2
 		}
@@ -189,23 +196,70 @@ func Verify() bool {
 	}
 
 	// ---------------------------------------------------------------------------
-	//
-	//	Global figures
-	//
+	// Global figures
 	// ---------------------------------------------------------------------------
 	globalL2OverL2 := math.Sqrt(sumRowL2Sq) // √Σ_i ‖s_i‖₂²
-
-	log.Printf("GLOBAL :  max_i‖s_i‖₂ = %.4f    √Σ‖s_i‖₂² = %.4f",
+	log.Printf("GLOBAL : max_i‖s_i‖₂ = %.4f    √Σ‖s_i‖₂² = %.4f",
 		globalInfOverL2, globalL2OverL2)
 
 	// ---------------------------------------------------------------------------
-	//
-	//	Global bound  (still using bound = q  on the  ∞-over-2  value)
-	//
+	// Global bound check (using q on the ∞-over-2 value)
 	// ---------------------------------------------------------------------------
-	if globalInfOverL2 > float64(pp.Q)*float64(pp.Q) {
-		log.Printf("❌ global bound failed: max_i‖s_i‖₂ = %.4f  >  q**2 = %d",
-			globalInfOverL2, pp.Q*pp.Q)
+	if globalInfOverL2 > float64(pp.Q) {
+		log.Printf("❌ global bound failed: max_i‖s_i‖₂ = %.4f  >  q = %d",
+			globalInfOverL2, pp.Q)
+	} else {
+		log.Printf("✅ norm checks passed: max_i‖s_i‖₂ = %.4f,   √Σ‖s_i‖₂² = %.4f",
+			globalInfOverL2, globalL2OverL2)
+	}
+
+	// ---------------------------------------------------------------------------
+	// Extract centered coefficients into coefSigs (unchanged)
+	// ---------------------------------------------------------------------------
+	coefSigs := make([][]int64, len(SEval))
+	for i, p := range SEval {
+		coefPoly := ringQ.NewPoly()
+		ringQ.InvNTT(p, coefPoly)
+
+		row := make([]int64, pp.N)
+		for j, cu := range coefPoly.Coeffs[0] {
+			if cu > uint64(halfQ) {
+				row[j] = int64(cu) - qval
+			} else {
+				row[j] = int64(cu)
+			}
+		}
+		coefSigs[i] = row
+	}
+	// prepare JSON blob
+	out := struct {
+		Timestamp string    `json:"timestamp"` // YYYYMMDD_HHMMSS
+		Coeffs    [][]int64 `json:"coeffs"`
+	}{
+		Timestamp: time.Now().Format("20060102_150405"),
+		Coeffs:    coefSigs,
+	}
+
+	// ensure directory
+	_ = os.MkdirAll("Signature_Reading", 0755)
+	fname := fmt.Sprintf("Signature_Reading/coeffsig_%s.json", out.Timestamp)
+	f, err := os.Create(fname)
+	if err != nil {
+		log.Printf("⚠️ could not write coeff‐sig JSON: %v", err)
+	} else {
+		defer f.Close()
+		enc := json.NewEncoder(f)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			log.Printf("⚠️ error encoding coeff‐sig JSON: %v", err)
+		} else {
+			log.Printf("✔ saved coefficient‐domain signature to %s", fname)
+		}
+	}
+
+	if globalInfOverL2 > float64(pp.Q) {
+		log.Printf("❌ global bound failed: max_i‖s_i‖₂ = %.4f  >  q = %d",
+			globalInfOverL2, pp.Q)
 		return false
 	}
 

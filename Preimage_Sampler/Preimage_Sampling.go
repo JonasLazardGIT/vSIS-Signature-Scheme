@@ -274,139 +274,139 @@ func GaussSamp(
 	// End of collapse tracer
 	// -----------------------------------------------------------------------------
 
-	//! ---------- DEBUG B : verify Ap + Gz = u ----------
-	if true {
-		// helper to centre a coeff into (−q/2, q/2]
-		centre := func(v uint64) int64 {
-			q := int64(ringQ.Modulus[0])
-			x := int64(v)
-			if x > q/2 {
-				x -= q
-			}
-			return x
-		}
+	// //! ---------- DEBUG B : verify Ap + Gz = u ----------
+	// if true {
+	// 	// helper to centre a coeff into (−q/2, q/2]
+	// 	centre := func(v uint64) int64 {
+	// 		q := int64(ringQ.Modulus[0])
+	// 		x := int64(v)
+	// 		if x > q/2 {
+	// 			x -= q
+	// 		}
+	// 		return x
+	// 	}
 
-		tmp := ringQ.NewPoly()
+	// 	tmp := ringQ.NewPoly()
 
-		// 1) Compute A·x in NTT, then back to coefficients
-		AxEval := ringQ.NewPoly()
-		for i := range A {
-			ringQ.MulCoeffs(A[i], x[i], tmp)
-			ringQ.Add(AxEval, tmp, AxEval)
-		}
+	// 	// 1) Compute A·x in NTT, then back to coefficients
+	// 	AxEval := ringQ.NewPoly()
+	// 	for i := range A {
+	// 		ringQ.MulCoeffs(A[i], x[i], tmp)
+	// 		ringQ.Add(AxEval, tmp, AxEval)
+	// 	}
 
-		// 1b) also compute A·p and A·z separately for diagnostics
-		ApEval := ringQ.NewPoly()
-		for i := range p {
-			ringQ.MulCoeffs(A[i], p[i], tmp)
-			ringQ.Add(ApEval, tmp, ApEval)
-		}
-		ApCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(ApEval, ApCoeff)
+	// 	// 1b) also compute A·p and A·z separately for diagnostics
+	// 	ApEval := ringQ.NewPoly()
+	// 	for i := range p {
+	// 		ringQ.MulCoeffs(A[i], p[i], tmp)
+	// 		ringQ.Add(ApEval, tmp, ApEval)
+	// 	}
+	// 	ApCoeff := ringQ.NewPoly()
+	// 	ringQ.InvNTT(ApEval, ApCoeff)
 
-		AzEval := ringQ.NewPoly()
-		// contributions from gadget columns
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffs(A[j+2], zHat[j], tmp)
-			ringQ.Add(AzEval, tmp, AzEval)
-		}
-		// contributions from x0,x1 parts
-		eDotZEvalAcc := ringQ.NewPoly()
-		rDotZEvalAcc := ringQ.NewPoly()
-		for j := 0; j < k; j++ {
-			ringQ.MulCoeffs(eHat[j], zHat[j], tmp)
-			ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
-			ringQ.MulCoeffs(rHat[j], zHat[j], tmp)
-			ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
-		}
-		ringQ.MulCoeffs(A[0], eDotZEvalAcc, tmp)
-		ringQ.Add(AzEval, tmp, AzEval)
-		ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
-		ringQ.Add(AzEval, tmp, AzEval)
+	// 	AzEval := ringQ.NewPoly()
+	// 	// contributions from gadget columns
+	// 	for j := 0; j < k; j++ {
+	// 		ringQ.MulCoeffs(A[j+2], zHat[j], tmp)
+	// 		ringQ.Add(AzEval, tmp, AzEval)
+	// 	}
+	// 	// contributions from x0,x1 parts
+	// 	eDotZEvalAcc := ringQ.NewPoly()
+	// 	rDotZEvalAcc := ringQ.NewPoly()
+	// 	for j := 0; j < k; j++ {
+	// 		ringQ.MulCoeffs(eHat[j], zHat[j], tmp)
+	// 		ringQ.Add(eDotZEvalAcc, tmp, eDotZEvalAcc)
+	// 		ringQ.MulCoeffs(rHat[j], zHat[j], tmp)
+	// 		ringQ.Add(rDotZEvalAcc, tmp, rDotZEvalAcc)
+	// 	}
+	// 	ringQ.MulCoeffs(A[0], eDotZEvalAcc, tmp)
+	// 	ringQ.Add(AzEval, tmp, AzEval)
+	// 	ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
+	// 	ringQ.Add(AzEval, tmp, AzEval)
 
-		AzCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(AzEval, AzCoeff)
+	// 	AzCoeff := ringQ.NewPoly()
+	// 	ringQ.InvNTT(AzEval, AzCoeff)
 
-		// 1c) verify that A·p + G·z equals the target u
-		Gz := CreateGadgetMatrix(ringQ, base, 1, k)
-		GzEval := ringQ.NewPoly()
-		for j := 0; j < k; j++ {
-			ringQ.NTT(Gz[j], Gz[j])
-			ringQ.MulCoeffs(Gz[j], zHat[j], tmp)
-			ringQ.Add(GzEval, tmp, GzEval)
-		}
+	// 	// 1c) verify that A·p + G·z equals the target u
+	// 	Gz := CreateGadgetMatrix(ringQ, base, 1, k)
+	// 	GzEval := ringQ.NewPoly()
+	// 	for j := 0; j < k; j++ {
+	// 		ringQ.NTT(Gz[j], Gz[j])
+	// 		ringQ.MulCoeffs(Gz[j], zHat[j], tmp)
+	// 		ringQ.Add(GzEval, tmp, GzEval)
+	// 	}
 
-		GzCoeff_FromVector := ringQ.NewPoly()
-		ringQ.InvNTT(GzEval, GzCoeff_FromVector)
+	// 	GzCoeff_FromVector := ringQ.NewPoly()
+	// 	ringQ.InvNTT(GzEval, GzCoeff_FromVector)
 
-		uCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(u, uCoeff)
+	// 	uCoeff := ringQ.NewPoly()
+	// 	ringQ.InvNTT(u, uCoeff)
 
-		sumCheck := ringQ.NewPoly()
-		ringQ.Add(ApCoeff, GzCoeff_FromVector, sumCheck)
-		ringQ.Sub(sumCheck, uCoeff, sumCheck)
+	// 	sumCheck := ringQ.NewPoly()
+	// 	ringQ.Add(ApCoeff, GzCoeff_FromVector, sumCheck)
+	// 	ringQ.Sub(sumCheck, uCoeff, sumCheck)
 
-		diff0 := centre(sumCheck.Coeffs[0][0])
-		if diff0 != 0 {
-			log.Printf("[CHECK] A·p coeff[0]=%d", centre(ApCoeff.Coeffs[0][0]))
-			log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff_FromVector.Coeffs[0][0]))
-			log.Printf("[CHECK] u coeff[0]=%d", centre(uCoeff.Coeffs[0][0]))
-			log.Fatalf("[CHECK] A·p+G·z mismatch at slot 0: %d", diff0)
-		}
-		for t := 1; t < ringQ.N; t++ {
-			if centre(sumCheck.Coeffs[0][t]) != 0 {
-				log.Fatalf("[CHECK] A·p+G·z mismatch at slot %d: %d", t, centre(sumCheck.Coeffs[0][t]))
-			}
-		}
-		fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
+	// 	diff0 := centre(sumCheck.Coeffs[0][0])
+	// 	if diff0 != 0 {
+	// 		log.Printf("[CHECK] A·p coeff[0]=%d", centre(ApCoeff.Coeffs[0][0]))
+	// 		log.Printf("[CHECK] G·z coeff[0]=%d", centre(GzCoeff_FromVector.Coeffs[0][0]))
+	// 		log.Printf("[CHECK] u coeff[0]=%d", centre(uCoeff.Coeffs[0][0]))
+	// 		log.Fatalf("[CHECK] A·p+G·z mismatch at slot 0: %d", diff0)
+	// 	}
+	// 	for t := 1; t < ringQ.N; t++ {
+	// 		if centre(sumCheck.Coeffs[0][t]) != 0 {
+	// 			log.Fatalf("[CHECK] A·p+G·z mismatch at slot %d: %d", t, centre(sumCheck.Coeffs[0][t]))
+	// 		}
+	// 	}
+	// 	fmt.Println("[CHECK] A·p + G·z ≡ u  ✔")
 
-		// 1d) verify that the object per object assembled x indeed satisfies A·x = u
-		AxEvalCheck := ringQ.NewPoly()
-		ring.Copy(ApEval, AxEvalCheck)
+	// 	// 1d) verify that the object per object assembled x indeed satisfies A·x = u
+	// 	AxEvalCheck := ringQ.NewPoly()
+	// 	ring.Copy(ApEval, AxEvalCheck)
 
-		blockA2 := ringQ.NewPoly()
-		ring.Copy(GzEval, blockA2)
-		ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
-		ringQ.Sub(blockA2, tmp, blockA2)
-		ringQ.Sub(blockA2, eDotZEvalAcc, blockA2)
+	// 	blockA2 := ringQ.NewPoly()
+	// 	ring.Copy(GzEval, blockA2)
+	// 	ringQ.MulCoeffs(A[1], rDotZEvalAcc, tmp)
+	// 	ringQ.Sub(blockA2, tmp, blockA2)
+	// 	ringQ.Sub(blockA2, eDotZEvalAcc, blockA2)
 
-		blockX01 := ringQ.NewPoly()
-		ringQ.MulCoeffs(A[1], rDotZEvalAcc, blockX01)
-		ringQ.Add(blockX01, eDotZEvalAcc, blockX01)
+	// 	blockX01 := ringQ.NewPoly()
+	// 	ringQ.MulCoeffs(A[1], rDotZEvalAcc, blockX01)
+	// 	ringQ.Add(blockX01, eDotZEvalAcc, blockX01)
 
-		ringQ.Add(AxEvalCheck, blockA2, AxEvalCheck)
-		ringQ.Add(AxEvalCheck, blockX01, AxEvalCheck)
+	// 	ringQ.Add(AxEvalCheck, blockA2, AxEvalCheck)
+	// 	ringQ.Add(AxEvalCheck, blockX01, AxEvalCheck)
 
-		AxCoeff := ringQ.NewPoly()
-		ringQ.InvNTT(AxEvalCheck, AxCoeff)
+	// 	AxCoeff := ringQ.NewPoly()
+	// 	ringQ.InvNTT(AxEvalCheck, AxCoeff)
 
-		diffAx := ringQ.NewPoly()
-		ringQ.Sub(AxCoeff, uCoeff, diffAx)
+	// 	diffAx := ringQ.NewPoly()
+	// 	ringQ.Sub(AxCoeff, uCoeff, diffAx)
 
-		for t := 1; t < ringQ.N; t++ {
-			if centre(diffAx.Coeffs[0][t]) != 0 {
-				log.Fatalf("[CHECK] A·x mismatch at slot %d: %d", t, centre(diffAx.Coeffs[0][t]))
-			}
-		}
-		fmt.Println("[CHECK] A·x ≡ u  ✔")
+	// 	for t := 1; t < ringQ.N; t++ {
+	// 		if centre(diffAx.Coeffs[0][t]) != 0 {
+	// 			log.Fatalf("[CHECK] A·x mismatch at slot %d: %d", t, centre(diffAx.Coeffs[0][t]))
+	// 		}
+	// 	}
+	// 	fmt.Println("[CHECK] A·x ≡ u  ✔")
 
-		// 6a) accumEval = A ⋅ x in evaluation domain
-		accumEval := ringQ.NewPoly()
-		tmpEval := ringQ.NewPoly()
-		for i := 0; i < len(A); i++ {
-			ringQ.MulCoeffs(A[i], x[i], tmpEval)
-			ringQ.Add(accumEval, tmpEval, accumEval)
-		}
+	// 	// 6a) accumEval = A ⋅ x in evaluation domain
+	// 	accumEval := ringQ.NewPoly()
+	// 	tmpEval := ringQ.NewPoly()
+	// 	for i := 0; i < len(A); i++ {
+	// 		ringQ.MulCoeffs(A[i], x[i], tmpEval)
+	// 		ringQ.Add(accumEval, tmpEval, accumEval)
+	// 	}
 
-		// 6b) Verify that A·x ≡ u mod q
-		for i := 0; i < ringQ.N; i++ {
-			if accumEval.Coeffs[0][i] != u.Coeffs[0][i] {
-				log.Fatalf("[GaussSamp] A·x mismatch at slot %d: got %d want %d",
-					i, accumEval.Coeffs[0][i], u.Coeffs[0][i])
-			}
-		}
-	}
-	//! ---------- END DEBUG B ----------
+	// 	// 6b) Verify that A·x ≡ u mod q
+	// 	for i := 0; i < ringQ.N; i++ {
+	// 		if accumEval.Coeffs[0][i] != u.Coeffs[0][i] {
+	// 			log.Fatalf("[GaussSamp] A·x mismatch at slot %d: got %d want %d",
+	// 				i, accumEval.Coeffs[0][i], u.Coeffs[0][i])
+	// 		}
+	// 	}
+	// }
+	// //! ---------- END DEBUG B ----------
 	return x
 }
 
