@@ -46,9 +46,8 @@ type transcript struct {
 // Global variables for bit-decomposition checks
 // --------------------------------------------------------------------------
 
-const B uint64 = 1 << 40
-
 var (
+	B             uint64
 	T             int
 	bitVals       []uint64
 	sumSquares    uint64
@@ -83,27 +82,28 @@ func RunPACSSimulation() bool {
 
 	// ------------------------------------------------------------- witnesses
 	w1, w2, w3 := BuildWitnessFromDisk() // helper in another PIOP file
+	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
 
 	// ─── after: w1, w2, w3 := BuildWitnessFromDisk() ──────────────
-	// 1. sum up all the squares c_i = a_i²
 	originalW1Len = len(w1)
+	mSig := originalW1Len - len(B0m) - len(B0r)
 	sumSquares = 0
-	for _, Pi := range w1 {
-		coeff := ringQ.NewPoly()
-		ringQ.InvNTT(Pi, coeff)
-		ai := coeff.Coeffs[0][0] % q
-		sumSquares = (sumSquares + (ai*ai)%q) % q
+	tmp := ringQ.NewPoly()
+	for t := 0; t < mSig; t++ {
+		ringQ.InvNTT(w1[t], tmp)
+		for j := 0; j < ringQ.N; j++ {
+			v := tmp.Coeffs[0][j] % q
+			sumSquares = (sumSquares + (v*v)%q) % q
+		}
 	}
-	// 2. compute Δ = B – sumSquares (mod q, but assumed B > sumSquares)
+
+	B = q
 	delta := (B + q - sumSquares%q) % q
-	// 3. bit-length T = ceil(log2(B+1))
 	T = bits.Len64(B)
-	// 4. decompose Δ into T bits
 	bitVals = make([]uint64, T)
 	for t := 0; t < T; t++ {
 		bitVals[t] = (delta >> uint(t)) & 1
 	}
-	// 5. append each bit as a new “coordinate” in w1 and w3 (w2 constant=1)
 	for t := 0; t < T; t++ {
 		p1 := ringQ.NewPoly()
 		p1.Coeffs[0][0] = bitVals[t]
@@ -117,6 +117,14 @@ func RunPACSSimulation() bool {
 	}
 	if tamperBit && len(bitVals) > 0 {
 		bitVals[0] ^= 1
+		if len(w1) > originalW1Len {
+			c := ringQ.NewPoly()
+			ringQ.InvNTT(w1[originalW1Len], c)
+			c.Coeffs[0][0] ^= 1
+			ringQ.NTT(c, c)
+			w1[originalW1Len] = c
+			w3[originalW1Len] = c.CopyNew()
+		}
 	}
 
 	// ---------------------------------------------------------- LVCS.Commit
@@ -145,7 +153,6 @@ func RunPACSSimulation() bool {
 	sCols := len(w1)
 
 	Fpar := buildFparBits(ringQ, w1, w2, w3)
-	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
 	Fagg := buildFaggSlack(ringQ, w1, w2, A, b1, B0c, B0m, B0r)
 
 	totalParallel := len(Fpar)
@@ -199,21 +206,27 @@ func RunPACSSimulation() bool {
 func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly, ell int) [][]uint64 {
 	s := len(w1)
 	ncols := r.N - ell
-	rows := make([][]uint64, s+2) // s rows of w1, then x1 and w3
+	rows := make([][]uint64, s+2)
 	q := r.Modulus[0]
-	coeff := r.NewPoly()
+
+	coeffsW1 := make([]*ring.Poly, len(w1))
+	for i, P := range w1 {
+		c := r.NewPoly()
+		r.InvNTT(P, c)
+		coeffsW1[i] = c
+	}
 
 	for row := 0; row < s; row++ {
 		rows[row] = make([]uint64, ncols)
-		for col, P := range w1 {
-			r.InvNTT(P, coeff)
-			rows[row][col] = coeff.Coeffs[0][row] % q
+		for col := 0; col < len(w1) && col < ncols; col++ {
+			rows[row][col] = coeffsW1[col].Coeffs[0][row] % q
 		}
-		for col := s; col < ncols; col++ {
+		for col := len(w1); col < ncols; col++ {
 			rows[row][col] = 0
 		}
 	}
 
+	coeff := r.NewPoly()
 	r.InvNTT(w2, coeff)
 	rows[s] = make([]uint64, ncols)
 	for col := 0; col < ncols; col++ {
@@ -225,7 +238,7 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 		r.InvNTT(P, coeff)
 		rows[s+1][col] = coeff.Coeffs[0][0]
 	}
-	for col := s; col < ncols; col++ {
+	for col := len(w3); col < ncols; col++ {
 		rows[s+1][col] = 0
 	}
 
@@ -248,9 +261,11 @@ func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 			f := evalPoint(r, Fpar[j], idx)
 			rhs = modAdd(rhs, modMul(g, f, q), q)
 		}
-		g := gammaP[i][0]
-		f := evalPoint(r, Fagg[0], idx)
-		rhs = modAdd(rhs, modMul(g, f, q), q)
+		for j := 0; j < len(Fagg); j++ {
+			g := gammaP[i][j]
+			f := evalPoint(r, Fagg[j], idx)
+			rhs = modAdd(rhs, modMul(g, f, q), q)
+		}
 
 		if lhs != rhs {
 			return false
@@ -341,6 +356,7 @@ func buildFaggSlack(r *ring.Ring,
 	for i := range slackPoly.Coeffs[0] {
 		slackPoly.Coeffs[0][i] = slackVal
 	}
+	r.NTT(slackPoly, slackPoly)
 	out = append(out, slackPoly)
 
 	return out
