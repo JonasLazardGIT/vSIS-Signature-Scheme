@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math/bits"
 	"testing"
 
 	decs "vSIS-Signature/DECS"
@@ -42,12 +43,35 @@ type transcript struct {
 }
 
 // --------------------------------------------------------------------------
+// Global variables for bit-decomposition checks
+// --------------------------------------------------------------------------
+
+const B uint64 = 1 << 40
+
+var (
+	T             int
+	bitVals       []uint64
+	sumSquares    uint64
+	originalW1Len int
+	tamperBit     bool
+)
+
+// --------------------------------------------------------------------------
 // go test entry‑point
 // --------------------------------------------------------------------------
 func TestPACSSimulation(t *testing.T) {
 	if !RunPACSSimulation() {
 		t.Fatalf("verifier rejected – some check failed")
 	}
+}
+
+// Negative test: flip one bit and expect rejection.
+func TestPACSSimulationNegative(t *testing.T) {
+	tamperBit = true
+	if RunPACSSimulation() {
+		t.Fatalf("verifier accepted invalid witness")
+	}
+	tamperBit = false
 }
 
 // RunPACSSimulation executes one *interactive* proof and returns the verdict.
@@ -59,6 +83,41 @@ func RunPACSSimulation() bool {
 
 	// ------------------------------------------------------------- witnesses
 	w1, w2, w3 := BuildWitnessFromDisk() // helper in another PIOP file
+
+	// ─── after: w1, w2, w3 := BuildWitnessFromDisk() ──────────────
+	// 1. sum up all the squares c_i = a_i²
+	originalW1Len = len(w1)
+	sumSquares = 0
+	for _, Pi := range w1 {
+		coeff := ringQ.NewPoly()
+		ringQ.InvNTT(Pi, coeff)
+		ai := coeff.Coeffs[0][0] % q
+		sumSquares = (sumSquares + (ai*ai)%q) % q
+	}
+	// 2. compute Δ = B – sumSquares (mod q, but assumed B > sumSquares)
+	delta := (B + q - sumSquares%q) % q
+	// 3. bit-length T = ceil(log2(B+1))
+	T = bits.Len64(B)
+	// 4. decompose Δ into T bits
+	bitVals = make([]uint64, T)
+	for t := 0; t < T; t++ {
+		bitVals[t] = (delta >> uint(t)) & 1
+	}
+	// 5. append each bit as a new “coordinate” in w1 and w3 (w2 constant=1)
+	for t := 0; t < T; t++ {
+		p1 := ringQ.NewPoly()
+		p1.Coeffs[0][0] = bitVals[t]
+		ringQ.NTT(p1, p1)
+		w1 = append(w1, p1)
+
+		p3 := ringQ.NewPoly()
+		p3.Coeffs[0][0] = bitVals[t]
+		ringQ.NTT(p3, p3)
+		w3 = append(w3, p3)
+	}
+	if tamperBit && len(bitVals) > 0 {
+		bitVals[0] ^= 1
+	}
 
 	// ---------------------------------------------------------- LVCS.Commit
 	ell := 1 // exactly one mask coordinate per row
@@ -84,12 +143,17 @@ func RunPACSSimulation() bool {
 	// ------------------------------------------------------- PACS batching
 	rho := 1
 	sCols := len(w1)
-	GammaP := sampleRandPolys(ringQ, rho, sCols, sCols) // Γ′ (deg ≤ s−1)
-	gammaP := sampleRandMatrix(rho, 1, q)               // γ′ (single row)
 
-	Fpar := buildFpar(ringQ, w1, w2, w3)
+	Fpar := buildFparBits(ringQ, w1, w2, w3)
 	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
-	Fagg := buildFagg(ringQ, w1, w2, A, b1, B0c, B0m, B0r)
+	Fagg := buildFaggSlack(ringQ, w1, w2, A, b1, B0c, B0m, B0r)
+
+	totalParallel := len(Fpar)
+	GammaP := sampleRandPolys(ringQ, rho, totalParallel, sCols)
+	totalAgg := len(Fagg)
+	gammaP := sampleRandMatrix(rho, totalAgg, q)
+
+	fmt.Printf("→ parallel rows: %d; aggregated rows: %d; witness cols: %d\n", totalParallel, totalAgg, sCols)
 
 	omega := make([]uint64, sCols)
 	for i := range omega {
@@ -193,6 +257,93 @@ func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 		}
 	}
 	return true
+}
+
+// buildFparBits constructs the parallel constraint polynomials including
+// additional bit-check rows.
+func buildFparBits(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) []*ring.Poly {
+	out := make([]*ring.Poly, 0, originalW1Len+T)
+	tmp := r.NewPoly()
+	for k := 0; k < originalW1Len; k++ {
+		p := w3[k].CopyNew()
+		r.MulCoeffs(w1[k], w2, tmp)
+		r.Sub(p, tmp, p)
+		out = append(out, p)
+	}
+	for t := 0; t < T; t++ {
+		Z := w1[originalW1Len+t]
+		tmp2 := r.NewPoly()
+		r.MulCoeffs(Z, Z, tmp2)
+		r.Sub(tmp2, Z, tmp2)
+		out = append(out, tmp2)
+	}
+	return out
+}
+
+// buildFaggSlack appends a constant slack row enforcing the bound on the
+// sum of squares.
+func buildFaggSlack(r *ring.Ring,
+	w1 []*ring.Poly, w2 *ring.Poly,
+	A [][]*ring.Poly, b1 []*ring.Poly,
+	B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly) []*ring.Poly {
+
+	mSig := originalW1Len - len(B0Msg) - len(B0Rnd)
+	out := make([]*ring.Poly, len(A))
+	tmp := r.NewPoly()
+	left1 := r.NewPoly()
+	left2 := r.NewPoly()
+	right := r.NewPoly()
+
+	for j := range A {
+		clear := func(p *ring.Poly) {
+			for i := range p.Coeffs[0] {
+				p.Coeffs[0][i] = 0
+			}
+		}
+		clear(left1)
+		clear(left2)
+		clear(right)
+
+		for t := 0; t < mSig; t++ {
+			r.MulCoeffs(b1[j], A[j][t], tmp)
+			r.MulCoeffs(tmp, w1[t], tmp)
+			addInto(r, left1, tmp)
+
+			r.MulCoeffs(A[j][t], w1[t], tmp)
+			r.MulCoeffs(tmp, w2, tmp)
+			addInto(r, left2, tmp)
+		}
+		addInto(r, right, B0Const[j])
+		for i := range B0Msg {
+			r.MulCoeffs(B0Msg[i][j], w1[mSig+i], tmp)
+			addInto(r, right, tmp)
+		}
+		offset := mSig + len(B0Msg)
+		for i := range B0Rnd {
+			r.MulCoeffs(B0Rnd[i][j], w1[offset+i], tmp)
+			addInto(r, right, tmp)
+		}
+
+		r.Sub(left1, left2, tmp)
+		r.Sub(tmp, right, tmp)
+		out[j] = tmp.CopyNew()
+	}
+
+	// Slack row enforcing sumSquares + Σ2^t bitVals[t] = B
+	q := r.Modulus[0]
+	slackVal := sumSquares % q
+	for t, bv := range bitVals {
+		slackVal = (slackVal + ((1<<uint(t))%q)*bv%q) % q
+	}
+	slackVal = (slackVal + q - (B % q)) % q
+
+	slackPoly := r.NewPoly()
+	for i := range slackPoly.Coeffs[0] {
+		slackPoly.Coeffs[0][i] = slackVal
+	}
+	out = append(out, slackPoly)
+
+	return out
 }
 
 // ------- small utilities  ---------------------------------------
