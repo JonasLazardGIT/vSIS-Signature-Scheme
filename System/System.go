@@ -23,6 +23,7 @@ type SystemParams struct {
 	SigmaT float64 `json:"sigma_t"` // gadget‐scaled Gaussian width
 	Sigma  float64 `json:"sigma"`   // raw Gaussian width
 	Bound  float64 `json:"bound"`   // spectral (norm) bound s
+	Beta   uint64  `json:"beta"`    // public L2 bound β
 }
 
 // BMatrix holds four Rq‐polynomials in coefficient form
@@ -45,6 +46,7 @@ func Generate() {
 	// Compute σₜ and bound s
 	sigmaT, bound := Preimage_Sampler.CalculateParams(base, n, k)
 	sigma := sigmaT / float64(base+1)
+	beta := uint64(math.Ceil(bound))
 
 	// 2) Instantiate R_q
 	ringQ, err := ring.NewRing(n, []uint64{q})
@@ -61,6 +63,7 @@ func Generate() {
 		SigmaT: sigmaT,
 		Sigma:  sigma,
 		Bound:  bound,
+		Beta:   beta,
 	}
 
 	// 4) Serialize parameters to JSON
