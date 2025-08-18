@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	ps "vSIS-Signature/Preimage_Sampler"
 	Parameters "vSIS-Signature/System"
+	prof "vSIS-Signature/prof"
 	vsishash "vSIS-Signature/vSIS-HASH"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -38,6 +40,7 @@ type SignatureData struct {
 }
 
 func Sign() {
+	defer prof.Track(time.Now(), "Sign")
 	// 1) load public parameters
 	params, err := LoadParams("Parameters/Parameters.json")
 	if err != nil {

@@ -4,7 +4,9 @@ package PIOP
 import (
 	"fmt"
 	"log"
+	"time"
 	signer "vSIS-Signature/Signer"
+	prof "vSIS-Signature/prof"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
@@ -189,6 +191,7 @@ func BuildQ(
 	GammaPrime [][]*ring.Poly,
 	gammaPrime [][]uint64,
 ) []*ring.Poly {
+	defer prof.Track(time.Now(), "BuildQ")
 
 	rho := len(M)
 	m1 := len(Fpar)
@@ -226,6 +229,7 @@ func VerifyQ(
 	Q []*ring.Poly,
 	omega []uint64,
 ) bool {
+	defer prof.Track(time.Now(), "VerifyQ")
 	coeff := ringQ.NewPoly()
 	q := ringQ.Modulus[0]
 
@@ -419,6 +423,7 @@ func makeSigPolys(r *ring.Ring, rows [][]uint64) []*ring.Poly {
 
 // Fpar_k(X)  = w3_k - w1_k·w2
 func buildFpar(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) []*ring.Poly {
+	defer prof.Track(time.Now(), "buildFpar")
 	out := make([]*ring.Poly, len(w1))
 	tmp := r.NewPoly()
 	for k := range w1 {
@@ -435,6 +440,7 @@ func buildFagg(r *ring.Ring,
 	w1 []*ring.Poly, w2 *ring.Poly,
 	A [][]*ring.Poly, b1 []*ring.Poly,
 	B0Const []*ring.Poly, B0Msg, B0Rnd [][]*ring.Poly) []*ring.Poly {
+	defer prof.Track(time.Now(), "buildFagg")
 
 	mSig := len(w1) - len(B0Msg) - len(B0Rnd)
 	out := make([]*ring.Poly, len(A))
@@ -482,6 +488,7 @@ func buildFagg(r *ring.Ring,
 
 // random deg ≤ s-1 polys
 func sampleRandPolys(r *ring.Ring, rows, cols, s int) [][]*ring.Poly {
+	defer prof.Track(time.Now(), "sampleRandPolys")
 	out := make([][]*ring.Poly, rows)
 	for i := 0; i < rows; i++ {
 		out[i] = make([]*ring.Poly, cols)
@@ -499,6 +506,7 @@ func sampleRandPolys(r *ring.Ring, rows, cols, s int) [][]*ring.Poly {
 
 // random scalar matrix  rows×cols  in F_q
 func sampleRandMatrix(rows, cols int, q uint64) [][]uint64 {
+	defer prof.Track(time.Now(), "sampleRandMatrix")
 	M := make([][]uint64, rows)
 	for i := 0; i < rows; i++ {
 		M[i] = make([]uint64, cols)

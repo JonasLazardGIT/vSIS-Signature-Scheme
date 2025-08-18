@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"log"
 	"testing"
+	"time"
 
 	decs "vSIS-Signature/DECS"
 	lvcs "vSIS-Signature/LVCS"
 	signer "vSIS-Signature/Signer"
+	prof "vSIS-Signature/prof"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
@@ -69,6 +71,7 @@ func TestPACSSimulationNegative(t *testing.T) {
 
 // RunPACSSimulation executes one *interactive* proof and returns the verdict.
 func RunPACSSimulation() bool {
+	defer prof.Track(time.Now(), "RunPACSSimulation")
 	// ------------------------------------------------------------- parameters
 	par, _ := signer.LoadParams("../Parameters/Parameters.json")
 	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
@@ -224,6 +227,7 @@ func RunPACSSimulation() bool {
 // ============================================================================
 
 func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly, ell int) [][]uint64 {
+	defer prof.Track(time.Now(), "columnsToRows")
 	s := len(w1)
 	ncols := r.N - ell
 	rows := make([][]uint64, s+2)
@@ -268,6 +272,7 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 // Eq.(4) consistency on each opened index (unchanged)
 func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 	Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]*ring.Poly, gammaP [][]uint64) bool {
+	defer prof.Track(time.Now(), "checkEq4OnOpening")
 
 	q := r.Modulus[0]
 	tmp := r.NewPoly()
@@ -354,6 +359,7 @@ func polysToBytes(pp []*ring.Poly) []byte {
 // ---------------------------------------------------------------------------
 func loadPublicTables(ringQ *ring.Ring) (A [][]*ring.Poly, b1, B0Const []*ring.Poly,
 	B0Msg, B0Rnd [][]*ring.Poly) {
+	defer prof.Track(time.Now(), "loadPublicTables")
 
 	pk, err := signer.LoadPublicKey("../public_key/public_key.json")
 	if err != nil {

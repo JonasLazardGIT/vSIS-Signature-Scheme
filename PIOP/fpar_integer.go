@@ -1,9 +1,15 @@
 package PIOP
 
-import "github.com/tuneinsight/lattigo/v4/ring"
+import (
+	"time"
+
+	"github.com/tuneinsight/lattigo/v4/ring"
+	prof "vSIS-Signature/prof"
+)
 
 // Sqs(X) = sum_{k<mSig} W1[k]^2 (Hadamard square per coefficient)
 func buildSqs(r *ring.Ring, w1 []*ring.Poly, mSig int) *ring.Poly {
+	defer prof.Track(time.Now(), "buildSqs")
 	q := r.Modulus[0]
 	acc := r.NewPoly() // coefficient domain accumulator
 	tmp := r.NewPoly()
@@ -28,6 +34,7 @@ type DecompCols struct {
 
 // appendDecompositionColumns allocates witness columns for digits, remainders and bits.
 func appendDecompositionColumns(r *ring.Ring, LS, W int) DecompCols {
+	defer prof.Track(time.Now(), "appendDecompositionColumns")
 	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
 	cols := DecompCols{
 		D:   make([]*ring.Poly, LS),
@@ -49,6 +56,7 @@ func appendDecompositionColumns(r *ring.Ring, LS, W int) DecompCols {
 
 // buildFparIntegerDecomp emits parallel rows for bitness, digit formation and remainder chain.
 func buildFparIntegerDecomp(r *ring.Ring, Sqs *ring.Poly, spec BoundSpec, cols DecompCols) (Fpar []*ring.Poly) {
+	defer prof.Track(time.Now(), "buildFparIntegerDecomp")
 	q := r.Modulus[0]
 	LS, W, R := spec.LS, spec.W, spec.R
 

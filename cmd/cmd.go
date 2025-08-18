@@ -4,15 +4,18 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	// "vSIS-Signature/Preimage_Sampler"
 
 	signer "vSIS-Signature/Signer"
 	Parameters "vSIS-Signature/System"
 	verifier "vSIS-Signature/Verifier"
+	prof "vSIS-Signature/prof"
 )
 
 func main() {
+	defer prof.Track(time.Now(), "main")
 	// Preimage_Sampler.Main()
 	// 1) Generate (or load) public system parameters
 	fmt.Println("🔧 Generating public parameters...")

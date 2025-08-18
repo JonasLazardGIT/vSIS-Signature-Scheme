@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 	signer "vSIS-Signature/Signer"
+	prof "vSIS-Signature/prof"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/utils"
@@ -115,6 +117,7 @@ func BuildWitness(
 	u []*ring.Poly,
 	x0 []*ring.Poly,
 ) (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
+	defer prof.Track(time.Now(), "BuildWitness")
 
 	n := len(A)    // #rows in A
 	m := len(s)    // len(signature vector)
@@ -220,6 +223,7 @@ func BuildWitness(
 }
 
 func BuildWitnessFromDisk() (w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) {
+	defer prof.Track(time.Now(), "BuildWitnessFromDisk")
 
 	// ‣ 0. parameters ----------------------------------------------------------
 	par, _ := signer.LoadParams("../Parameters/Parameters.json")

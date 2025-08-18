@@ -1,6 +1,11 @@
 package PIOP
 
-import "github.com/tuneinsight/lattigo/v4/ring"
+import (
+	"time"
+
+	"github.com/tuneinsight/lattigo/v4/ring"
+	prof "vSIS-Signature/prof"
+)
 
 type GlobCarry struct {
 	C     []*ring.Poly
@@ -9,6 +14,7 @@ type GlobCarry struct {
 
 // appendGlobalCarrys allocates global carry polys and bit columns.
 func appendGlobalCarrys(r *ring.Ring, LS, Wc int) GlobCarry {
+	defer prof.Track(time.Now(), "appendGlobalCarrys")
 	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
 	g := GlobCarry{
 		C:     make([]*ring.Poly, LS+1),
@@ -26,6 +32,7 @@ func appendGlobalCarrys(r *ring.Ring, LS, Wc int) GlobCarry {
 
 // buildFparGlobCarryBits ties each carry to its bit decomposition.
 func buildFparGlobCarryBits(r *ring.Ring, S0inv uint64, Wc int, g GlobCarry) (Fpar []*ring.Poly) {
+	defer prof.Track(time.Now(), "buildFparGlobCarryBits")
 	q := r.Modulus[0]
 	for l := 0; l < len(g.C); l++ {
 		for u := 0; u < Wc; u++ {
@@ -47,6 +54,7 @@ func buildFparGlobCarryBits(r *ring.Ring, S0inv uint64, Wc int, g GlobCarry) (Fp
 
 // buildFaggIntegerSum constructs aggregated limb-sum rows without slack.
 func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, _ uint64, S0inv uint64, cols DecompCols, g GlobCarry) (Fagg []*ring.Poly) {
+	defer prof.Track(time.Now(), "buildFaggIntegerSum")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
 	for l := 0; l < LS; l++ {
 		p := r.NewPoly()
@@ -67,6 +75,7 @@ func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, _ uint64, S0inv uint64, c
 
 // buildFparGlobSlackBits ties slack digits to their bit decompositions.
 func buildFparGlobSlackBits(r *ring.Ring, S0inv uint64, W int, s GlobSlack) (Fpar []*ring.Poly) {
+	defer prof.Track(time.Now(), "buildFparGlobSlackBits")
 	q := r.Modulus[0]
 	for l := 0; l < len(s.D); l++ {
 		for u := 0; u < W; u++ {
@@ -88,6 +97,7 @@ func buildFparGlobSlackBits(r *ring.Ring, S0inv uint64, W int, s GlobSlack) (Fpa
 
 // buildFaggIntegerSumDelta includes slack digits in the aggregated rows.
 func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, _ uint64, S0inv uint64, cols DecompCols, g GlobCarry, s GlobSlack) (Fagg []*ring.Poly) {
+	defer prof.Track(time.Now(), "buildFaggIntegerSumDelta")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
 	for l := 0; l < LS; l++ {
 		coeff := r.NewPoly()

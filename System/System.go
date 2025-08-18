@@ -7,11 +7,13 @@ import (
 	"log"
 	"math"
 	"os"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/utils"
 
 	"vSIS-Signature/Preimage_Sampler"
+	prof "vSIS-Signature/prof"
 )
 
 // SystemParams holds all public parameters for vSIS
@@ -36,6 +38,7 @@ type BMatrix struct {
 // ./Parameters/Parameters.json, and also generates the common‐random
 // B‐matrix and saves it to ./Parameters/Bmatrix.json.
 func Generate() {
+	defer prof.Track(time.Now(), "GenerateParameters")
 	// 1) Parameter arithmetic
 	n := 512
 	q := uint64(8399873)

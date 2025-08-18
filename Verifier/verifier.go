@@ -9,6 +9,7 @@ import (
 	"time"
 
 	Parameters "vSIS-Signature/System"
+	prof "vSIS-Signature/prof"
 	vsishash "vSIS-Signature/vSIS-HASH"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -31,6 +32,7 @@ type SignatureData struct {
 }
 
 func Verify() bool {
+	defer prof.Track(time.Now(), "Verify")
 	// 1) load system params
 	pp, err := loadParams("Parameters/Parameters.json")
 	if err != nil {

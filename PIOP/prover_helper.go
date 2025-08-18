@@ -19,8 +19,10 @@ import (
 	"errors"
 	"log"
 	"math/big"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
+	prof "vSIS-Signature/prof"
 )
 
 // -----------------------------------------------------------------------------
@@ -177,6 +179,7 @@ func Interpolate(xs, ys []uint64, q uint64) []uint64 {
 //
 // Pre‑conditions:  len(row)==len(omega)==s,   ℓ≥1,   xs are all distinct.
 func BuildRowPolynomial(ringQ *ring.Ring, row, omega []uint64, ell int) (poly *ring.Poly, rPoints, rEvals []uint64, err error) {
+	defer prof.Track(time.Now(), "BuildRowPolynomial")
 	if len(row) != len(omega) {
 		return nil, nil, nil, errors.New("row and omega length mismatch")
 	}
@@ -243,6 +246,7 @@ so the linear constraint is met:
 It panics if q | |Ω|.
 */
 func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64) []*ring.Poly {
+	defer prof.Track(time.Now(), "BuildMaskPolynomials")
 
 	q := ringQ.Modulus[0]
 	s := uint64(len(omega))

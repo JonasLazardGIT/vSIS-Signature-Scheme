@@ -2,8 +2,10 @@ package PIOP
 
 import (
 	"math/big"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
+	prof "vSIS-Signature/prof"
 )
 
 // GlobSlack holds global slack digits and their bit decomposition.
@@ -14,6 +16,7 @@ type GlobSlack struct {
 
 // appendGlobalSlack allocates slack digit columns.
 func appendGlobalSlack(r *ring.Ring, LS, W int) GlobSlack {
+	defer prof.Track(time.Now(), "appendGlobalSlack")
 	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
 	s := GlobSlack{
 		D:     make([]*ring.Poly, LS),
@@ -36,6 +39,7 @@ func ProverFillIntegerL2(
 	cols DecompCols, glob GlobCarry, slack GlobSlack,
 	S0, S0inv uint64,
 ) error {
+	defer prof.Track(time.Now(), "ProverFillIntegerL2")
 	q := r.Modulus[0]
 	N := r.N
 	R := spec.R
