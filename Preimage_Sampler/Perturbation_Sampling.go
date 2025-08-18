@@ -533,6 +533,17 @@ func SamplePz(
 	return out
 }
 
+// transposeNTT implements the ring “transpose” X -> X^{-1} directly in NTT form
+func transposeNTT(r *ring.Ring, a *ring.Poly) *ring.Poly {
+	// fallback implementation via coeff-domain transpose
+	coeff := r.NewPoly()
+	r.InvNTT(a, coeff)
+	coeffT := AutomorphismTranspose(r, coeff)
+	out := r.NewPoly()
+	r.NTT(coeffT, out)
+	return out
+}
+
 // makeSmallRing returns a *ring.Ring of degree N (a power of two) and modulus q.
 func makeSmallRing(N int, q uint64) *ring.Ring {
 	r, err := ring.NewRing(N, []uint64{q})

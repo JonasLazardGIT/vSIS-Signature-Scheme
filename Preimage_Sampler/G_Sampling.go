@@ -179,39 +179,21 @@ func Perturb(
 	return p
 }
 
-// SampleC reproduces PALISADE's SampleC (Figure 2, 2017/308).
+// SampleC draws the last digit and returns the carry for backward recursion.
 //
-//	c     :  constant divisor vector  (length k)
-//	a     :  *mutable* accumulator  (length k) – will be updated in place
-//	sigma :  continuous σ'
+//	sigma :  continuous σ_t /(t+1)
+//	a     :  accumulator array (length k)
+//	base  :  gadget base
+//	c     :  constant divisor vector
 //
-// It returns the lattice vector z (length k)   INT64.
-func SampleC(
-	c []float64,
-	sigma float64,
-	a []float64,
-) []int64 {
-
+// Returns the sampled last digit zk and the carry value.
+func SampleC(sigma float64, a []float64, base uint64, c []float64) (int64, float64) {
 	k := len(c)
-	z := make([]int64, k)
-
-	// 1) draw last coordinate with conditional parameters
-	dgg := NewDiscreteGaussian(sigma / c[k-1]) // corrected to initialize dgg
-	z[k-1] = dgg.Draw(
-		-a[k-1] / c[k-1])
-
-	// 2) propagate carry:  a ← a + z_{k-1}·c   (note the **plus**)
-	zLastFloat := float64(z[k-1])
-	for i := 0; i < k; i++ {
-		a[i] += zLastFloat * c[i]
-	}
-
-	// 3) draw remaining coordinates (independent, mean = -a_i)
-	for i := 0; i < k-1; i++ {
-		dgg = NewDiscreteGaussian(sigma) // reinitialize dgg for each i
-		z[i] = dgg.Draw(-a[i])
-	}
-	return z
+	dgg := NewDiscreteGaussian(sigma / c[k-1])
+	mu := a[k-1]
+	zk := dgg.Draw(mu)
+	carry := (mu - float64(zk)) / float64(base)
+	return zk, carry
 }
 
 // SampleGDiscrete implements the *discrete* G–sampling exactly like the
@@ -261,12 +243,7 @@ func SampleGDiscrete(
 	}
 
 	//--------------------------------------------------------------------
-	// 3)  σ'  =  σ_t /(t+1)
-	//--------------------------------------------------------------------
-	sigmaP := sigma / float64(base+1)
-
-	//--------------------------------------------------------------------
-	// 4)  allocate result  Z[k][N]
+	// 3)  allocate result  Z[k][N]
 	//--------------------------------------------------------------------
 	Z := make([][]int64, k)
 	for i := range Z {
@@ -276,23 +253,41 @@ func SampleGDiscrete(
 	//--------------------------------------------------------------------
 	// 5)  main loop over polynomial coefficients
 	//--------------------------------------------------------------------
+	sigmaP := sigma / float64(base+1)
+
 	for j := 0; j < N; j++ {
-		// 5a)  base-t digits of current syndrome coeff
-		vDigits := baseDigits(int64(uCoeff[j]), int64(base), k)
+		// 5a)  base-t digits of current syndrome coeff (integer radix decomposition)
+		vDigits := make([]uint64, k)
+		{
+			vv := uCoeff[j]
+			for i := 0; i < k; i++ {
+				vDigits[i] = vv % base
+				vv /= base
+			}
+		}
 
 		// 5b)  perturbation  p   (discrete variant)
 		p := Perturb(sigmaP, l, h, base) // []int64 length k
 
-		// 5c)  build *accumulator*  a  (running carry)      [! changed]
+		// 5c)  carry/mean recursion as in PALISADE
 		a := make([]float64, k)
 		a[0] = float64(int64(vDigits[0])-p[0]) / float64(base)
 		for i := 1; i < k; i++ {
 			a[i] = (a[i-1] + float64(int64(vDigits[i])-p[i])) / float64(base)
 		}
 
-		// 5d)  sample  z  from the sparse lattice           [! changed]
-		z := SampleC(cConst, sigmaP, a)
-		// 5e)  recombine t-vector and store into Z          [! changed]
+		// 5d)  sample z vector
+		z := make([]int64, k)
+		zk, carry := SampleC(sigmaP, a, base, cConst)
+		z[k-1] = zk
+		dgg := NewDiscreteGaussian(sigmaP)
+		for i := k - 2; i >= 0; i-- {
+			mu := a[i] - carry
+			z[i] = dgg.Draw(mu)
+			carry = mu - math.Round(mu)
+		}
+
+		// 5e)  recombine t-vector and store into Z
 		//      t₀  =  base·z₀  +  q₀·z_{k−1}  +  v₀
 		Z[0][j] = int64(base)*int64(z[0]) +
 			int64(modDigits[0])*int64(z[k-1]) +

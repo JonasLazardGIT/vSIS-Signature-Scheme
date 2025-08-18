@@ -48,21 +48,12 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 		log.Fatal("empty gadget vector")
 	}
 	q := ringQ.Modulus[0]
-	bredCtx := ringQ.BredParams[0] // Barrett context for q
 
-	// ---------------------------------------------------------------------
-	// 1) Pre-compute ψ⁻¹  in standard residues
-	// ---------------------------------------------------------------------
-	psi := ringQ.NewPoly()
-	for i := 0; i < N; i++ { // constant poly "1"
-		psi.Coeffs[0][i] = 1
-	}
-	ringQ.NTT(psi, psi) // ψ(i)  (standard residues)
-
-	psiInv := make([]uint64, N)
+	// Build ψ^{-1} in Montgomery form (required for MulCoeffsMontgomery with MForm inputs)
+	psiInv := ringQ.NewPoly()
 	for i := 0; i < N; i++ {
-		coeff := psi.Coeffs[0][i]              // already standard
-		psiInv[i] = ring.ModExp(coeff, q-2, q) // coeff^{-1}  mod q
+		// ringQ.PsiInvMont[] is already in Montgomery domain for Lattigo’s NTT primes
+		psiInv.Coeffs[0][i] = ringQ.PsiInvMont[i]
 	}
 
 	// ---------------------------------------------------------------------
@@ -84,14 +75,11 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 			p.Coeffs[0][t] = uint64(v)
 		}
 
-		ringQ.NTT(p, p) // to evaluation domain (standard)
-
-		// slot-wise multiply by ψ⁻¹   --- still standard
-		for t := 0; t < N; t++ {
-			p.Coeffs[0][t] = ring.BRedConstant( // (p·ψInv) mod q
-				p.Coeffs[0][t], psiInv[t], q, bredCtx)
-		}
-		out[row] = p // standard NTT poly
+		ringQ.NTT(p, p) // to evaluation domain
+		// ensure p is in Montgomery form before pointwise multiply
+		ringQ.MForm(p, p)
+		ringQ.MulCoeffsMontgomery(p, psiInv, p)
+		out[row] = p
 	}
 	return out
 }
@@ -116,8 +104,8 @@ func GaussSamp(
 	k int,
 ) []*ring.Poly {
 	N := ringQ.N
-	// 1) perturbation: p ∈ Z^{(k+2)×N}
-	p := SamplePz(ringQ, s, (2+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
+	// 1) perturbation: p ∈ Z^{(k+2)×N} using c = σ_t (no extra scaling)
+	p := SamplePz(ringQ, s, sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
 
 	// 2) compute sub = u - A·p in EVAL, then back to COEFF
 	pertEval := ringQ.NewPoly()
@@ -142,7 +130,8 @@ func GaussSamp(
 	}
 
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
-	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
+	// online G-sampling uses the same c = σ_t (no extra base scaling)
+	Zmat := SampleGDiscrete(ringQ, sigma, base, uCoeffs, k)
 
 	// Zmat is a matrix of integers Z ∈ ℤ^{κ×N} where each row is a poly in R_q
 

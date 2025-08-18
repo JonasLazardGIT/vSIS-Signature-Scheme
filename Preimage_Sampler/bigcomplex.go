@@ -554,7 +554,7 @@ func NegacyclicInterpolateElem(f *CyclotomicFieldElem, ringQ *ring.Ring) *ring.P
 		realBF := inv[j].Real
 		f64, _ := realBF.Float64()
 
-		// Multiply by 2 to undo the “÷2” that IFFTBig implicitly introduced ★
+		// Multiply by 2 to account for the odd-slot embedding (length-2n IFFT with only odd slots set)
 		rInt := int64(math.Round(f64 * 2.0))
 
 		// reduce mod q into [0..q−1]
@@ -714,9 +714,10 @@ func HermitianTransposeFieldElem(f *CyclotomicFieldElem) *CyclotomicFieldElem {
 		out.Domain = Coeff
 
 	case Eval:
-		// out.Eval[k] = conj( in.Eval[n−k−1] )
+		// In Eval, “transpose” corresponds to the automorphism X -> X^{-1}.
+		// We reverse the slot index without conjugation.
 		for k := 0; k < n; k++ {
-			kp := n - k - 1
+			kp := (n - k) % n
 			src := f.Coeffs[k]
 			out.Coeffs[kp] = &BigComplex{
 				Real: new(big.Float).SetPrec(prec).Copy(src.Real),
