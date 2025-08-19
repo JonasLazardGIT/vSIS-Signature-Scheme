@@ -217,7 +217,7 @@ func SampleC(
 //	ringQ   : R_q ring
 //	sigma   : continuous Gaussian width σ_t
 //	base    : gadget base t  (may be >2)
-//	uCoeff  : coefficient form of u(x) in [0,q), len=N=ringQ.N
+//	vCoeff  : centered syndrome coefficients, len=N=ringQ.N
 //	k       : gadget length (digits)
 //
 // RETURNS  a k×N matrix Z of int64.
@@ -225,7 +225,7 @@ func SampleGDiscrete(
 	ringQ *ring.Ring,
 	sigma float64,
 	base uint64,
-	uCoeff []uint64,
+	vCoeff []int64,
 	k int,
 ) [][]int64 {
 
@@ -275,7 +275,7 @@ func SampleGDiscrete(
 	//--------------------------------------------------------------------
 	for j := 0; j < N; j++ {
 		// 5a)  base-t digits of current syndrome coeff
-		vDigits := baseDigits(int64(uCoeff[j]), int64(base), k)
+		vDigits := baseDigits(vCoeff[j], int64(base), k)
 
 		// 5b)  perturbation  p   (discrete variant)
 		p := Perturb(sigmaP, l, h, base) // []int64 length k

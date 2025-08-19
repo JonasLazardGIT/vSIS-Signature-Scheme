@@ -5,31 +5,46 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
+	"strconv"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
 // SpectralBound returns the analytic upper-bound
 //
-//	s_max = 1.8*(t+1)*sigma^2*(sqrt(n*k)+sqrt(2n)+4.7)
+//	s_max = 1.8*sigma^2*(sqrt(n*k)+sqrt(2n)+4.7)
+//
+// The constant can be overridden with S_CONST.
 func SpectralBound(n, k int, base uint64) float64 {
 	const (
-		dgError       = 8.27181e-25
-		nMax          = 2048
-		spectralConst = 1.8
+		dgError = 8.27181e-25
+		nMax    = 2048
 	)
+	spectralConst := 1.8
+	if env := os.Getenv("S_CONST"); env != "" {
+		if v, err := strconv.ParseFloat(env, 64); err == nil {
+			spectralConst = v
+		}
+	}
 	sigma := math.Sqrt(math.Log(2*float64(nMax)/dgError) / math.Pi)
 	sig2 := sigma * sigma
 	term := math.Sqrt(float64(n*k)) + math.Sqrt(2*float64(n)) + 4.7
-	return spectralConst * float64(base+1) * sig2 * term
+	return spectralConst * sig2 * term
 }
 
 // calculateParams computes σₜ=(t+1)σ and returns the spectral bound s
 // used for perturbation sampling.
 func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
-	sigma := 3.19                    // smoothing parameter from Sec V-A1
+	sigmaConst := 4.578
+	if env := os.Getenv("SIGMA_CONST"); env != "" {
+		if v, err := strconv.ParseFloat(env, 64); err == nil {
+			sigmaConst = v
+		}
+	}
+	sigma := sigmaConst              // smoothing parameter from Gur et al.
 	sigmaT = float64(base+1) * sigma // σₜ = (t+1)·σ
-	s = SpectralBound(n, k, base)    // 1.3 * sigma * sigmaT * sqrt(n*k + 2*n + 4.7)
+	s = SpectralBound(n, k, base)    // spectral bound without (t+1) factor
 	return
 }
 
@@ -88,8 +103,14 @@ func GaussSamp(
 ) []*ring.Poly {
 	N := ringQ.N
 	// 1) perturbation: p ∈ Z^{(k+2)×N}
-	// alpha = (base+1)·sigma
-	p := SamplePz(ringQ, s, float64(base+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
+	alphaMode := os.Getenv("ALPHA_MODE")
+	var alpha float64
+	if alphaMode == "GEN" {
+		alpha = float64(base+1) * sigma
+	} else {
+		alpha = 2 * sigma
+	}
+	p := SamplePz(ringQ, s, alpha, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
 
 	// 2) compute sub = u - A·p in EVAL, then back to COEFF
 	pertEval := ringQ.NewPoly()
@@ -104,13 +125,25 @@ func GaussSamp(
 	sub := ringQ.NewPoly()
 	ringQ.InvNTT(subEval, sub) // sub.Coeffs now holds u - A·p in coeffs
 
-	// 3) discrete G-sampling (Alg 3) to get Z ∈ Z^{κ×N}
-	//    we only need the level-0 coefficients
-	uCoeffs := make([]uint64, N)
-	copy(uCoeffs, sub.Coeffs[0])
+	//  3. discrete G-sampling (Alg 3) to get Z ∈ Z^{κ×N}
+	//     we only need the level-0 coefficients
+	vCoeffs := make([]int64, N)
+	q := int64(ringQ.Modulus[0])
+        center := false
+        if env := os.Getenv("CENTER_SYNDROME"); env == "1" {
+                center = true
+        }
+	for i, u := range sub.Coeffs[0] {
+		x := int64(u)
+		if center {
+			if x > q/2 {
+				x -= q
+			}
+		}
+		vCoeffs[i] = x
+	}
 
-	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
-	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
+	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, vCoeffs, k)
 
 	// Zmat is a matrix of integers Z ∈ ℤ^{κ×N} where each row is a poly in R_q
 

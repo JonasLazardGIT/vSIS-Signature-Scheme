@@ -127,30 +127,30 @@ func RunPACSSimulation() bool {
 		}
 	}
 
-	// Ω and S0 after appending columns
-	sCols := len(w1)
-	omega := make([]uint64, sCols)
-	for i := range omega {
-		omega[i] = uint64(i + 1)
-	}
-	S0 := uint64(len(omega))
-	S0inv := modInv(S0, q)
+       // Ω and S0 after appending columns
+       ell := 1 // exactly one mask coordinate per row
+       ncols := ringQ.N - ell
+       omega := make([]uint64, ncols)
+       for i := range omega {
+               omega[i] = uint64(i + 1)
+       }
+       S0 := uint64(ncols)
+       S0inv := modInv(S0, q)
 
-	// Fill all new columns (coeff writes then NTT)
-	if err := ProverFillIntegerL2(ringQ, w1, mSig, spec, cols, glob, slack, S0, S0inv); err != nil {
-		panic(err)
-	}
-	if tamperBit && len(slack.DBits) > 0 && len(slack.DBits[0]) > 0 {
-		c := ringQ.NewPoly()
-		ringQ.InvNTT(slack.DBits[0][0], c)
-		c.Coeffs[0][0] ^= 1
-		ringQ.NTT(c, c)
-		slack.DBits[0][0] = c
-	}
+       // Fill all new columns (coeff writes then NTT)
+       if err := ProverFillIntegerL2(ringQ, w1, mSig, spec, cols, glob, slack, S0, S0inv); err != nil {
+               panic(err)
+       }
+       if tamperBit && len(slack.DBits) > 0 && len(slack.DBits[0]) > 0 {
+               c := ringQ.NewPoly()
+               ringQ.InvNTT(slack.DBits[0][0], c)
+               c.Coeffs[0][0] ^= 1
+               ringQ.NTT(c, c)
+               slack.DBits[0][0] = c
+       }
 
-	// ---------------------------------------------------------- LVCS.Commit
-	ell := 1 // exactly one mask coordinate per row
-	rows := columnsToRows(ringQ, w1, w2, w3, ell)
+       // ---------------------------------------------------------- LVCS.Commit
+       rows := columnsToRows(ringQ, w1, w2, w3, ell)
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
 
 	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta)
@@ -193,9 +193,8 @@ func RunPACSSimulation() bool {
 	M := BuildMaskPolynomials(ringQ, rho, dQ, omega)
 	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
 
-	// --------------------------------------------------------- verifier picks E
-	ncols := ringQ.N - ell // first index in mask area is ncols
-	E := []int{ncols}      // open exactly the first mask coordinate
+       // --------------------------------------------------------- verifier picks E
+       E := []int{ncols} // open exactly the first mask coordinate
 
 	// --------------------------------------------------------- opening & check
 	open := lvcs.EvalFinish(pk, E)
@@ -205,7 +204,7 @@ func RunPACSSimulation() bool {
 		return false
 	}
 
-	okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP)
+       okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP, omega)
 	okSum := VerifyQ(ringQ, Q, omega)
 
 	// --------------------------------------------------------- pretty print
@@ -271,39 +270,41 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 
 // Eq.(4) consistency on each opened index (unchanged)
 func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
-	Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]*ring.Poly, gammaP [][]uint64) bool {
-	defer prof.Track(time.Now(), "checkEq4OnOpening")
+       Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]*ring.Poly, gammaP [][]uint64, omega []uint64) bool {
+       defer prof.Track(time.Now(), "checkEq4OnOpening")
 
-	q := r.Modulus[0]
-	tmp := r.NewPoly()
-	for i, idx := range op.DECSOpen.Indices {
-		r.InvNTT(Q[i], tmp)
-		lhs := tmp.Coeffs[0][idx]
+       q := r.Modulus[0]
+       tmp := r.NewPoly()
+       for i, idx := range op.DECSOpen.Indices {
+               j := idx - 1
+               w := omega[j]
+               r.InvNTT(Q[i], tmp)
+               lhs := EvalPoly(tmp.Coeffs[0], w, q)
 
-		rhs := evalPoint(r, M[i], idx)
-		for j := range GammaP[i] {
-			g := evalPoint(r, GammaP[i][j], idx)
-			f := evalPoint(r, Fpar[j], idx)
-			rhs = modAdd(rhs, modMul(g, f, q), q)
-		}
-		for j := 0; j < len(Fagg); j++ {
-			g := gammaP[i][j]
-			f := evalPoint(r, Fagg[j], idx)
-			rhs = modAdd(rhs, modMul(g, f, q), q)
-		}
+               rhs := evalAt(r, M[i], w)
+               for t := range GammaP[i] {
+                       g := evalAt(r, GammaP[i][t], w)
+                       f := evalAt(r, Fpar[t], w)
+                       rhs = modAdd(rhs, modMul(g, f, q), q)
+               }
+               for t := 0; t < len(Fagg); t++ {
+                       g := gammaP[i][t]
+                       f := evalAt(r, Fagg[t], w)
+                       rhs = modAdd(rhs, modMul(g, f, q), q)
+               }
 
-		if lhs != rhs {
-			return false
-		}
-	}
-	return true
+               if lhs != rhs {
+                       return false
+               }
+       }
+       return true
 }
 
 // ------- small utilities  ---------------------------------------
-func evalPoint(r *ring.Ring, p *ring.Poly, idx int) uint64 {
-	c := r.NewPoly()
-	r.InvNTT(p, c)
-	return c.Coeffs[0][idx]
+func evalAt(r *ring.Ring, p *ring.Poly, x uint64) uint64 {
+       coeff := r.NewPoly()
+       r.InvNTT(p, coeff)
+       return EvalPoly(coeff.Coeffs[0], x, r.Modulus[0])
 }
 
 func firstColumn(mat [][]uint64) [][]uint64 {

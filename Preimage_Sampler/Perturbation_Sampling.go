@@ -4,6 +4,8 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"math/rand"
+	"os"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
@@ -321,11 +323,9 @@ func SamplePz(
 			}
 		}
 		if maxNorm > s*(1+eps) {
-			// log.Panicf("parameter s = %.6g is too small; need ≥ %.6g to satisfy ‖α[Tᵗ|I]‖≤s",
-			//      s, maxNorm)
+			log.Printf("spectral-norm warning: parameter s = %.6g < α‖[Tᵗ|I]‖ = %.6g", s, maxNorm)
 		} else {
-			// fmt.Printf("spectral-norm check: α‖[Tᵗ|I]‖ = %.6g  ≤  s = %.6g  ✔\n",
-			//      maxNorm, s)
+			log.Printf("spectral-norm check: α‖[Tᵗ|I]‖ = %.6g ≤ s = %.6g ✔", maxNorm, s)
 		}
 	}
 	//! ------------------------------------------------------------------
@@ -425,14 +425,23 @@ func SamplePz(
 
 	// (b) scale each coefficient by –z and round to nearest integer mod q
 	zF, _ := zBig.Float64()
+	randRound := true
+	if env := os.Getenv("RANDOMIZED_ROUNDING"); env == "0" {
+		randRound = false
+	}
 	for i := 0; i < ringQ.N; i++ {
 		// center into (−q/2,q/2]
 		v0 := int64(c0Poly.Coeffs[0][i])
 		if v0 > int64(ringQ.Modulus[0]/2) {
 			v0 -= int64(ringQ.Modulus[0])
 		}
-		// multiply by –z and round
-		s0 := int64(math.Round(-zF * float64(v0)))
+		var s0 int64
+		if randRound {
+			y := -zF * float64(v0)
+			s0 = int64(math.Floor(y + rand.Float64()))
+		} else {
+			s0 = int64(math.Round(-zF * float64(v0)))
+		}
 		c0Poly.Coeffs[0][i] = SignedToUnsigned(s0, ringQ.Modulus[0])
 		// verify modular reduction is exact
 		expect := s0 % int64(ringQ.Modulus[0])
@@ -450,7 +459,13 @@ func SamplePz(
 		if v1 > int64(ringQ.Modulus[0]/2) {
 			v1 -= int64(ringQ.Modulus[0])
 		}
-		s1 := int64(math.Round(-zF * float64(v1)))
+		var s1 int64
+		if randRound {
+			y1 := -zF * float64(v1)
+			s1 = int64(math.Floor(y1 + rand.Float64()))
+		} else {
+			s1 = int64(math.Round(-zF * float64(v1)))
+		}
 		c1Poly.Coeffs[0][i] = SignedToUnsigned(s1, ringQ.Modulus[0])
 		expect1 := s1 % int64(ringQ.Modulus[0])
 		if expect1 > int64(ringQ.Modulus[0])/2 {
