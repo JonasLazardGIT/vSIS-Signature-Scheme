@@ -34,40 +34,18 @@ func CalculateParams(base uint64, n, k int) (sigmaT, s float64) {
 }
 
 // ZtoZhat converts the integer gadget matrix Z (κ × N) into κ polynomials
-// in R_q.  Each row is
-//  1. copied to coefficient form,
-//  2. sent through the forward NTT,                 (still standard residues)
-//  3. multiplied slot-wise by ψ^{-1},               (still standard residues)
-//     where ψ = NTT(1) and ψ^{-1} is its entry-wise inverse.
+// in R_q. Each row is
+//  1. copied to coefficient form and
+//  2. sent through the forward NTT.
 //
-// The result slice contains κ polynomials in the *standard* NTT frame
-// (no Montgomery factor), ready for later use with ringQ.MulCoeffs.
+// The result slice contains κ polynomials in the NTT/Montgomery frame,
+// exactly as produced by ringQ.NTT.
 func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 	k, N := len(Z), ringQ.N
 	if k == 0 {
 		log.Fatal("empty gadget vector")
 	}
-	q := ringQ.Modulus[0]
-	bredCtx := ringQ.BredParams[0] // Barrett context for q
 
-	// ---------------------------------------------------------------------
-	// 1) Pre-compute ψ⁻¹  in standard residues
-	// ---------------------------------------------------------------------
-	psi := ringQ.NewPoly()
-	for i := 0; i < N; i++ { // constant poly "1"
-		psi.Coeffs[0][i] = 1
-	}
-	ringQ.NTT(psi, psi) // ψ(i)  (standard residues)
-
-	psiInv := make([]uint64, N)
-	for i := 0; i < N; i++ {
-		coeff := psi.Coeffs[0][i]              // already standard
-		psiInv[i] = ring.ModExp(coeff, q-2, q) // coeff^{-1}  mod q
-	}
-
-	// ---------------------------------------------------------------------
-	// 2) Process each row of Z
-	// ---------------------------------------------------------------------
 	out := make([]*ring.Poly, k)
 
 	for row := 0; row < k; row++ {
@@ -77,21 +55,15 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 
 		p := ringQ.NewPoly() // coefficient domain
 		for t := 0; t < N; t++ {
-			v := Z[row][t] % int64(q) // map into [0, q)
+			v := Z[row][t] % int64(ringQ.Modulus[0]) // map into [0,q)
 			if v < 0 {
-				v += int64(q)
+				v += int64(ringQ.Modulus[0])
 			}
 			p.Coeffs[0][t] = uint64(v)
 		}
 
-		ringQ.NTT(p, p) // to evaluation domain (standard)
-
-		// slot-wise multiply by ψ⁻¹   --- still standard
-		for t := 0; t < N; t++ {
-			p.Coeffs[0][t] = ring.BRedConstant( // (p·ψInv) mod q
-				p.Coeffs[0][t], psiInv[t], q, bredCtx)
-		}
-		out[row] = p // standard NTT poly
+		ringQ.NTT(p, p) // to evaluation domain (NTT/Montgomery)
+		out[row] = p
 	}
 	return out
 }
@@ -117,7 +89,8 @@ func GaussSamp(
 ) []*ring.Poly {
 	N := ringQ.N
 	// 1) perturbation: p ∈ Z^{(k+2)×N}
-	p := SamplePz(ringQ, s, (2+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
+	// alpha must equal σ_t (already provided as `sigma`)
+	p := SamplePz(ringQ, s, sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
 
 	// 2) compute sub = u - A·p in EVAL, then back to COEFF
 	pertEval := ringQ.NewPoly()
@@ -135,11 +108,7 @@ func GaussSamp(
 	// 3) discrete G-sampling (Alg 3) to get Z ∈ Z^{κ×N}
 	//    we only need the level-0 coefficients
 	uCoeffs := make([]uint64, N)
-	for j := 0; j < N; j++ {
-		signed := UnsignedToSigned(sub.Coeffs[0][j], ringQ.Modulus[0])
-		uCoeffs[j] = SignedToUnsigned(signed, ringQ.Modulus[0])
-
-	}
+	copy(uCoeffs, sub.Coeffs[0])
 
 	// fmt.Printf("uCoeffs = %v\n", uCoeffs)
 	Zmat := SampleGDiscrete(ringQ, (float64(base+1) * sigma), base, uCoeffs, k)
