@@ -54,12 +54,11 @@ func ZtoZhat(Z [][]int64, ringQ *ring.Ring) []*ring.Poly {
 		}
 
 		p := ringQ.NewPoly() // coefficient domain
-		for t := 0; t < N; t++ {
-			v := Z[row][t] % int64(ringQ.Modulus[0]) // map into [0,q)
-			if v < 0 {
-				v += int64(ringQ.Modulus[0])
+		for lvl, qi := range ringQ.Modulus {
+			mod := uint64(qi)
+			for t := 0; t < N; t++ {
+				p.Coeffs[lvl][t] = SignedToUnsigned(Z[row][t], mod)
 			}
-			p.Coeffs[0][t] = uint64(v)
 		}
 
 		ringQ.NTT(p, p) // to evaluation domain (NTT/Montgomery)
@@ -89,8 +88,8 @@ func GaussSamp(
 ) []*ring.Poly {
 	N := ringQ.N
 	// 1) perturbation: p ∈ Z^{(k+2)×N}
-	// alpha must equal σ_t (already provided as `sigma`)
-	p := SamplePz(ringQ, s, sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
+	// alpha = (base+1)·sigma
+	p := SamplePz(ringQ, s, float64(base+1)*sigma, [2][]*ring.Poly{rHat, eHat}, k+2, 256)
 
 	// 2) compute sub = u - A·p in EVAL, then back to COEFF
 	pertEval := ringQ.NewPoly()

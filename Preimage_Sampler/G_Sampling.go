@@ -33,7 +33,6 @@ type Trapdoor struct {
 // rows  : number of gadget rows (for our TrapGen, rows == 1)
 // k     : gadget length κ
 func CreateGadgetMatrix(ringQ *ring.Ring, base uint64, rows, k int) []*ring.Poly {
-	N := ringQ.N
 	// total number of polys = rows×k
 	G := make([]*ring.Poly, rows*k)
 
@@ -51,10 +50,8 @@ func CreateGadgetMatrix(ringQ *ring.Ring, base uint64, rows, k int) []*ring.Poly
 				for e := 0; e < j; e++ {
 					power = (power * base) % mod
 				}
-				// fill *all* N coefficients with this constant
-				for coeffIdx := 0; coeffIdx < N; coeffIdx++ {
-					p.Coeffs[tIdx][coeffIdx] = power
-				}
+				// set only the constant coefficient
+				p.Coeffs[tIdx][0] = power
 			}
 
 			G[idx] = p
