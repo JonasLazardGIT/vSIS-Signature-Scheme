@@ -110,12 +110,10 @@ func scalePolyNTT(r *ring.Ring, a *ring.Poly, c uint64, out *ring.Poly) {
 
 // constPolyNTT returns a constant polynomial t.
 func constPolyNTT(r *ring.Ring, t uint64) *ring.Poly {
-	p := r.NewPoly()
-	for i := range p.Coeffs[0] {
-		p.Coeffs[0][i] = t
-	}
-	r.NTT(p, p)
-	return p
+       p := r.NewPoly()
+       p.Coeffs[0][0] = t % r.Modulus[0]
+       r.NTT(p, p)
+       return p
 }
 
 // bitnessPoly returns polynomial enforcing bitness: b^2 - b, with Hadamard square in coeff domain.

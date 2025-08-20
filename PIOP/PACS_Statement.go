@@ -196,35 +196,35 @@ func BuildThetaPrimeSet(
 func BuildQ(
 	ringQ *ring.Ring,
 	M []*ring.Poly,
-	Fpar []*ring.Poly,
-	Fagg []*ring.Poly,
-	GammaPrime [][]uint64,
-	gammaPrime [][]uint64,
+        Fpar []*ring.Poly,
+        Fagg []*ring.Poly,
+        GammaPrime [][]*ring.Poly,
+        gammaPrime [][]uint64,
 ) []*ring.Poly {
 	defer prof.Track(time.Now(), "BuildQ")
 
 	rho := len(M)
-	m1 := len(Fpar)
-	m2 := len(Fagg)
+        m1 := len(Fpar)
+        m2 := len(Fagg)
 
-	Q := make([]*ring.Poly, rho)
-	tmp := ringQ.NewPoly()
-	for i := 0; i < rho; i++ {
-		Qi := M[i].CopyNew() // start with M_i(X)
+        Q := make([]*ring.Poly, rho)
+        tmp := ringQ.NewPoly()
+        for i := 0; i < rho; i++ {
+                Qi := M[i].CopyNew() // start with M_i(X)
 
-		// Σ_j Γ'_{i,j} * F_j(X)
-		for j := 0; j < m1; j++ {
-			mulScalarNTT(ringQ, Fpar[j], GammaPrime[i][j], tmp)
-			addInto(ringQ, Qi, tmp)
-		}
-		// Σ_j γ'_{i,j} * F'_j(X)
-		for j := 0; j < m2; j++ {
-			mulScalarNTT(ringQ, Fagg[j], gammaPrime[i][j], tmp)
-			addInto(ringQ, Qi, tmp)
-		}
-		Q[i] = Qi
-	}
-	return Q
+                // Σ_j Γ'_{i,j}(X) * F_j(X)
+                for j := 0; j < m1; j++ {
+                        ringQ.MulCoeffs(GammaPrime[i][j], Fpar[j], tmp)
+                        addInto(ringQ, Qi, tmp)
+                }
+                // Σ_j γ'_{i,j} * F'_j(X)
+                for j := 0; j < m2; j++ {
+                        mulScalarNTT(ringQ, Fagg[j], gammaPrime[i][j], tmp)
+                        addInto(ringQ, Qi, tmp)
+                }
+                Q[i] = Qi
+        }
+        return Q
 }
 
 // verify_q.go
@@ -437,16 +437,12 @@ func BuildQFromDisk() (Q []*ring.Poly, omega []uint64, ringQ *ring.Ring) {
 	fsOmg := bytesU64Vec(omega)
 	fsA := concatPolys(A[0])
 	fsB1 := concatPolys(b1)
-	fsGamma := newFSRNG("GammaPrime:offline", fsOmg, fsA, fsB1)
-	fsGammaSc := newFSRNG("gammaPrime:offline", fsOmg, fsA, fsB1)
-	GammaPrime := sampleFSMatrix(rho, len(Fpar), q, fsGamma)
-	gammaPrime := sampleFSMatrix(rho, len(Fagg), q, fsGammaSc)
+        fsGamma := newFSRNG("GammaPrime:offline", fsOmg, fsA, fsB1)
+        fsGammaSc := newFSRNG("gammaPrime:offline", fsOmg, fsA, fsB1)
+        GammaPrime := sampleFSPolys(ringQ, rho, len(Fpar), len(omega), fsGamma)
+        gammaPrime := sampleFSMatrix(rho, len(Fagg), q, fsGammaSc)
 
-	// precompute Ω-sums of Fpar and Fagg
-	sumFpar := sumPolyList(ringQ, Fpar, omega)
-	sumFagg := sumPolyList(ringQ, Fagg, omega)
-
-	M := BuildMaskPolynomials(ringQ, rho, dQ, omega, GammaPrime, gammaPrime, sumFpar, sumFagg)
+        M := BuildMaskPolynomials(ringQ, dQ, omega, Fpar, Fagg, GammaPrime, gammaPrime)
 
 	//-------------------------------------------------------------------[8] build Q
 	Q = BuildQ(ringQ, M, Fpar, Fagg, GammaPrime, gammaPrime)
