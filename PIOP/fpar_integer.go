@@ -97,10 +97,14 @@ func buildFparIntegerDecomp(r *ring.Ring, Sqs *ring.Poly, spec BoundSpec, cols D
 }
 
 // scalePolyNTT multiplies polynomial a by scalar c (mod q) and writes to out.
+// out may alias a.
 func scalePolyNTT(r *ring.Ring, a *ring.Poly, c uint64, out *ring.Poly) {
+	if out != a {
+		copy(out.Coeffs[0], a.Coeffs[0])
+	}
 	q := r.Modulus[0]
-	for i := range a.Coeffs[0] {
-		out.Coeffs[0][i] = (a.Coeffs[0][i] * c) % q
+	for i := range out.Coeffs[0] {
+		out.Coeffs[0][i] = modMul(out.Coeffs[0][i], c, q)
 	}
 }
 

@@ -1,6 +1,8 @@
 package PIOP
 
 import (
+	"math/big"
+	mrand "math/rand"
 	"testing"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -62,35 +64,98 @@ func TestBuildRowPolynomial(t *testing.T) {
 	}
 }
 
-func TestBuildMaskPolynomials(t *testing.T) {
+func TestMaskCancellation(t *testing.T) {
 	N := 16
 	q := uint64(97)
 	ringQ, _ := ring.NewRing(N, []uint64{q})
-
 	omega := []uint64{2, 4, 6}
-	rho := 3
+	rho := 2
 	dQ := 5
 
-	masks := BuildMaskPolynomials(ringQ, rho, dQ, omega)
+	// simple Fpar/Fagg
+	Fpar := []*ring.Poly{ringQ.NewPoly()}
+	Fagg := []*ring.Poly{}
+	sumFpar := sumPolyList(ringQ, Fpar, omega)
+	Gamma := sampleFSMatrix(rho, len(Fpar), q, newFSRNG("g"))
+	gamma := sampleFSMatrix(rho, len(Fagg), q, newFSRNG("h"))
+	M := BuildMaskPolynomials(ringQ, rho, dQ, omega, Gamma, gamma, sumFpar, []uint64{})
+	Q := BuildQ(ringQ, M, Fpar, Fagg, Gamma, gamma)
+	if !VerifyQ(ringQ, Q, omega) {
+		t.Fatalf("VerifyQ failed")
+	}
+}
 
-	for i, mNTT := range masks {
-		coeff := mNTT.CopyNew()
-		ringQ.InvNTT(coeff, coeff)
-		// sum over omega
-		sum := uint64(0)
-		for _, w := range omega {
-			sum = (sum + EvalPoly(coeff.Coeffs[0], w, q)) % q
+func TestFieldOps(t *testing.T) {
+	q := uint64(1<<61 - 1)
+	rnd := mrand.New(mrand.NewSource(0))
+	for i := 0; i < 100; i++ {
+		a := rnd.Uint64() % q
+		b := rnd.Uint64() % q
+		bigQ := new(big.Int).SetUint64(q)
+		bigA := new(big.Int).SetUint64(a)
+		bigB := new(big.Int).SetUint64(b)
+		if modAdd(a, b, q) != new(big.Int).Mod(new(big.Int).Add(bigA, bigB), bigQ).Uint64() {
+			t.Fatal("modAdd mismatch")
 		}
-		if sum != 0 {
-			t.Fatalf("mask %d constraint failed: Σ M_i(ω) = %d ≠ 0", i, sum)
+		if modSub(a, b, q) != new(big.Int).Mod(new(big.Int).Sub(bigA, bigB), bigQ).Uint64() {
+			t.Fatal("modSub mismatch")
 		}
-		// degree bound
-		deg := len(coeff.Coeffs[0]) - 1
-		for deg > 0 && coeff.Coeffs[0][deg] == 0 {
-			deg--
+		if modMul(a, b, q) != new(big.Int).Mod(new(big.Int).Mul(bigA, bigB), bigQ).Uint64() {
+			t.Fatal("modMul mismatch")
 		}
-		if deg > dQ {
-			t.Fatalf("mask %d degree %d exceeds dQ=%d", i, deg, dQ)
+	}
+}
+
+func TestEvalPolyRandom(t *testing.T) {
+	q := uint64(97)
+	rnd := mrand.New(mrand.NewSource(1))
+	coeffs := make([]uint64, 5)
+	for i := range coeffs {
+		coeffs[i] = rnd.Uint64() % q
+	}
+	x := rnd.Uint64() % q
+	// Horner result
+	got := EvalPoly(coeffs, x, q)
+	// naive evaluation
+	naive := uint64(0)
+	for i := len(coeffs) - 1; i >= 0; i-- {
+		naive = modMul(naive, x, q)
+		naive = modAdd(naive, coeffs[i], q)
+		if i == 0 {
+			break
 		}
+	}
+	if got != naive {
+		t.Fatalf("EvalPoly mismatch: got %d want %d", got, naive)
+	}
+}
+
+func TestOmegaHygiene(t *testing.T) {
+	N := 16
+	q := uint64(97)
+	ringQ, _ := ring.NewRing(N, []uint64{q})
+	omega := []uint64{1, 1, 2}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic on duplicate Ω")
+		}
+	}()
+	BuildMaskPolynomials(ringQ, 1, 3, omega, [][]uint64{{1}}, [][]uint64{}, []uint64{0}, []uint64{})
+}
+
+func TestBuildThetaPrimeSetMultiRow(t *testing.T) {
+	N := 16
+	q := uint64(97)
+	ringQ, _ := ring.NewRing(N, []uint64{q})
+	zero := ringQ.NewPoly()
+	A := [][]*ring.Poly{{zero, zero}, {zero, zero}}
+	b1 := []*ring.Poly{zero, zero}
+	B0Const := []*ring.Poly{zero, zero}
+	B0Msg := [][]*ring.Poly{{zero, zero}}
+	B0Rnd := [][]*ring.Poly{{zero, zero}}
+	omega := []uint64{1, 2}
+	tp := BuildThetaPrimeSet(ringQ, A, b1, B0Const, B0Msg, B0Rnd, omega)
+	if len(tp.ARows) != 2 || len(tp.ARows[0]) != 2 {
+		t.Fatalf("unexpected ARows shape")
 	}
 }

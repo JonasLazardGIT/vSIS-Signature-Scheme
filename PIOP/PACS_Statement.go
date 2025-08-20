@@ -2,6 +2,7 @@
 package PIOP
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"time"
@@ -107,7 +108,7 @@ func EvalAggregated(ringQ *ring.Ring, term1, term2, B0 uint64) uint64 {
 // -----------------------------------------------------------------------------
 
 type ThetaPrime struct {
-	ACols   []*ring.Poly   // one polynomial per column k of A
+	ARows   [][]*ring.Poly // [row][col]
 	B1Rows  []*ring.Poly   // one polynomial per row  j (|Ω| evaluations)
 	B0Const []*ring.Poly   // idem
 	B0Msg   [][]*ring.Poly // [msgIdx][row]
@@ -119,7 +120,7 @@ type ThetaPrime struct {
 // rows into P_i(X).
 func BuildThetaPrimeSet(
 	ringQ *ring.Ring,
-	A [][]*ring.Poly, // [row][col]  only row 0 used in toy data
+	A [][]*ring.Poly, // [row][col]
 	b1 []*ring.Poly, // [row]
 	B0Const []*ring.Poly, // [row]
 	B0Msg, B0Rnd [][]*ring.Poly, // [msgIdx][row]  /  [rndIdx][row]
@@ -129,23 +130,32 @@ func BuildThetaPrimeSet(
 	q := ringQ.Modulus[0]
 	s := len(omega)
 
-	// -- A columns ------------------------------------------------------------
-	aCols := make([]*ring.Poly, len(A[0]))
-	for k := range A[0] {
-		column := make([]uint64, s)
-		for row := 0; row < s; row++ {
-			column[row] = A[0][k].Coeffs[0][row] % q // coeff domain value
+	// -- A rows/cols ----------------------------------------------------------
+	aRows := make([][]*ring.Poly, len(A))
+	for i := range A {
+		aRows[i] = make([]*ring.Poly, len(A[i]))
+		for k := range A[i] {
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(A[i][k], coeff)
+			vals := make([]uint64, s)
+			for j := 0; j < s; j++ {
+				vals[j] = EvalPoly(coeff.Coeffs[0], omega[j]%q, q)
+			}
+			aRows[i][k] = BuildThetaPrime(ringQ, vals, omega)
 		}
-		aCols[k] = BuildThetaPrime(ringQ, column, omega)
 	}
 
 	// -- helper for row-wise constants ----------------------------------------
 	buildRowPolys := func(src []*ring.Poly) []*ring.Poly {
 		out := make([]*ring.Poly, len(src))
 		for j, pj := range src {
-			row := make([]uint64, s)
-			copy(row, pj.Coeffs[0][:s])
-			out[j] = BuildThetaPrime(ringQ, row, omega)
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(pj, coeff)
+			vals := make([]uint64, s)
+			for t := 0; t < s; t++ {
+				vals[t] = EvalPoly(coeff.Coeffs[0], omega[t]%q, q)
+			}
+			out[j] = BuildThetaPrime(ringQ, vals, omega)
 		}
 		return out
 	}
@@ -162,7 +172,7 @@ func BuildThetaPrimeSet(
 	}
 
 	return &ThetaPrime{
-		ACols:   aCols,
+		ARows:   aRows,
 		B1Rows:  b1Rows,
 		B0Const: b0cRows,
 		B0Msg:   build2D(B0Msg),
@@ -188,7 +198,7 @@ func BuildQ(
 	M []*ring.Poly,
 	Fpar []*ring.Poly,
 	Fagg []*ring.Poly,
-	GammaPrime [][]*ring.Poly,
+	GammaPrime [][]uint64,
 	gammaPrime [][]uint64,
 ) []*ring.Poly {
 	defer prof.Track(time.Now(), "BuildQ")
@@ -202,9 +212,9 @@ func BuildQ(
 	for i := 0; i < rho; i++ {
 		Qi := M[i].CopyNew() // start with M_i(X)
 
-		// Σ_j Γ'_{i,j}(X) * F_j(X)
+		// Σ_j Γ'_{i,j} * F_j(X)
 		for j := 0; j < m1; j++ {
-			ringQ.MulCoeffs(GammaPrime[i][j], Fpar[j], tmp)
+			mulScalarNTT(ringQ, Fpar[j], GammaPrime[i][j], tmp)
 			addInto(ringQ, Qi, tmp)
 		}
 		// Σ_j γ'_{i,j} * F'_j(X)
@@ -233,11 +243,26 @@ func VerifyQ(
 	coeff := ringQ.NewPoly()
 	q := ringQ.Modulus[0]
 
-	for _, Qi := range Q {
+	seen := make(map[uint64]struct{}, len(omega))
+	for _, w := range omega {
+		wm := w % q
+		if _, ok := seen[wm]; ok {
+			log.Fatalf("VerifyQ: Ω has duplicate element %d", wm)
+		}
+		seen[wm] = struct{}{}
+	}
+	if q%uint64(len(omega)) == 0 {
+		log.Fatalf("VerifyQ: q (= %d) is multiple of |Ω| (= %d)", q, len(omega))
+	}
+
+	for i, Qi := range Q {
 		ringQ.InvNTT(Qi, coeff)
 		sum := uint64(0)
 		for _, w := range omega {
 			sum = modAdd(sum, EvalPoly(coeff.Coeffs[0], w, q), q)
+		}
+		if DEBUG_SUMS {
+			fmt.Printf("[Q %d] ΣΩ Q_i = %d\n", i, sum)
 		}
 		if sum != 0 {
 			return false
@@ -267,16 +292,20 @@ func VerifyFullPACS(
 
 	// ------------------------------------------------------------------ f ----
 	tmp := ringQ.NewPoly()
+	zero := ringQ.NewPoly()
 	for k := 0; k < s; k++ {
 		ringQ.MulCoeffs(w1[k], w2, tmp)
 		ringQ.Sub(w3[k], tmp, tmp)
-		if !ringQ.Equal(tmp, ringQ.NewPoly()) {
+		if !ringQ.Equal(tmp, zero) {
 			return false // f constraint breaks for this k
 		}
 	}
 
 	// -------------------------------------------------------------- f′ summed
 	mSig := len(w1) - len(B0Msg) - len(B0Rnd) // length of signature vector s
+	if mSig < 0 {
+		log.Fatalf("VerifyFullPACS: negative mSig (len(w1)=%d)", len(w1))
+	}
 	nRows := len(A)
 
 	left1 := ringQ.NewPoly()
@@ -286,9 +315,7 @@ func VerifyFullPACS(
 	for j := 0; j < nRows; j++ {
 		// reset accumulators
 		for _, p := range []*ring.Poly{left1, left2, right} {
-			for idx := range p.Coeffs[0] {
-				p.Coeffs[0][idx] = 0
-			}
+			resetPoly(p)
 		}
 
 		// Σ_k (b1⊙A)_j·s
@@ -318,7 +345,7 @@ func VerifyFullPACS(
 		// f′_sum = left1 - left2 - right  must be zero
 		ringQ.Sub(left1, left2, tmp)
 		ringQ.Sub(tmp, right, tmp)
-		if !ringQ.Equal(tmp, ringQ.NewPoly()) {
+		if !ringQ.Equal(tmp, zero) {
 			return false // some aggregated constraint failed
 		}
 	}
@@ -375,12 +402,14 @@ func BuildQFromDisk() (Q []*ring.Poly, omega []uint64, ringQ *ring.Ring) {
 		A, b1, B0Const, B0Msg, B0Rnd,
 		/*private*/ s, x1, []*ring.Poly{m}, []*ring.Poly{x0})
 
-	//-------------------------------------------------------------------[5] Ω  (take first s integers)
+	//-------------------------------------------------------------------[5] Ω  = first s points of the NTT evaluation grid
 	sCols := len(w1)
+	px := ringQ.NewPoly() // P(X)=X
+	px.Coeffs[0][1] = 1
+	pts := ringQ.NewPoly()
+	ringQ.NTT(px, pts) // NTT(X) enumerates the grid (order consistent with ringQ)
 	omega = make([]uint64, sCols)
-	for i := range omega {
-		omega[i] = uint64(i + 1)
-	} // 1,2,…,s
+	copy(omega, pts.Coeffs[0][:sCols])
 
 	//-------------------------------------------------------------------[6] build F_j(X) & F'_j(X)
 	Fpar := buildFpar(ringQ, w1, w2, w3) // len = s
@@ -391,10 +420,33 @@ func BuildQFromDisk() (Q []*ring.Poly, omega []uint64, ringQ *ring.Ring) {
 	rho := 1 // one masking row is enough here
 	ell := 1 // expose 1 random point per row
 	dQ := sCols + ell - 1
-	M := BuildMaskPolynomials(ringQ, rho, dQ, omega)
 
-	GammaPrime := sampleRandPolys(ringQ, rho, len(Fpar), sCols)
-	gammaPrime := sampleRandMatrix(rho, len(Fagg), ringQ.Modulus[0])
+	// Bind to public inputs via FS: include Ω and public tables
+	q := ringQ.Modulus[0]
+	concatPolys := func(pp []*ring.Poly) []byte {
+		var out []byte
+		for _, p := range pp {
+			for _, c := range p.Coeffs[0] {
+				var b [8]byte
+				binary.LittleEndian.PutUint64(b[:], c)
+				out = append(out, b[:]...)
+			}
+		}
+		return out
+	}
+	fsOmg := bytesU64Vec(omega)
+	fsA := concatPolys(A[0])
+	fsB1 := concatPolys(b1)
+	fsGamma := newFSRNG("GammaPrime:offline", fsOmg, fsA, fsB1)
+	fsGammaSc := newFSRNG("gammaPrime:offline", fsOmg, fsA, fsB1)
+	GammaPrime := sampleFSMatrix(rho, len(Fpar), q, fsGamma)
+	gammaPrime := sampleFSMatrix(rho, len(Fagg), q, fsGammaSc)
+
+	// precompute Ω-sums of Fpar and Fagg
+	sumFpar := sumPolyList(ringQ, Fpar, omega)
+	sumFagg := sumPolyList(ringQ, Fagg, omega)
+
+	M := BuildMaskPolynomials(ringQ, rho, dQ, omega, GammaPrime, gammaPrime, sumFpar, sumFagg)
 
 	//-------------------------------------------------------------------[8] build Q
 	Q = BuildQ(ringQ, M, Fpar, Fagg, GammaPrime, gammaPrime)

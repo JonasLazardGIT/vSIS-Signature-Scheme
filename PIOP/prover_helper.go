@@ -15,15 +15,22 @@ package PIOP
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"log"
+	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 	prof "vSIS-Signature/prof"
 )
+
+var (
+	bigA, bigB, bigQ, bigAB big.Int
+)
+
+const DEBUG_SUMS = false
 
 // -----------------------------------------------------------------------------
 //  field helpers (mod q)
@@ -60,15 +67,108 @@ func modSub(a, b, q uint64) uint64 {
 	return a + q - b
 }
 
-// modMul returns (a·b) mod q –  constant‑time big‑uint multiplication.
+// modMul returns (a·b) mod q using big.Int temporaries without allocations.
 func modMul(a, b, q uint64) uint64 {
-	return (uint64(new(big.Int).Mul(big.NewInt(int64(a)), big.NewInt(int64(b))).Mod(
-		new(big.Int).Mul(big.NewInt(int64(a)), big.NewInt(int64(b))), big.NewInt(int64(q))).Uint64()))
+	bigA.SetUint64(a)
+	bigB.SetUint64(b)
+	bigQ.SetUint64(q)
+	bigAB.Mul(&bigA, &bigB)
+	bigAB.Mod(&bigAB, &bigQ)
+	return bigAB.Uint64()
 }
 
 // modInv returns a^{‑1} mod q (q must be prime).
 func modInv(a, q uint64) uint64 {
 	return ring.ModExp(a, q-2, q) // Fermat since q is prime in all params used.
+}
+
+// -----------------------------------------------------------------------------
+// Fiat–Shamir: tiny deterministic PRF stream (SHA‑256(counter || seed))
+// -----------------------------------------------------------------------------
+
+type fsRNG struct {
+	seed [32]byte
+	ctr  uint64
+}
+
+// newFSRNG derives a PRF seed from a label and arbitrary transcript material.
+func newFSRNG(label string, material ...[]byte) *fsRNG {
+	h := sha256.New()
+	h.Write([]byte(label))
+	for _, m := range material {
+		h.Write(m)
+	}
+	var s [32]byte
+	copy(s[:], h.Sum(nil))
+	return &fsRNG{seed: s}
+}
+
+func (r *fsRNG) nextU64() uint64 {
+	var in [40]byte
+	copy(in[:32], r.seed[:])
+	binary.LittleEndian.PutUint64(in[32:], r.ctr)
+	sum := sha256.Sum256(in[:])
+	r.ctr++
+	return binary.LittleEndian.Uint64(sum[:])
+}
+
+// Helpers to serialize inputs for FS binding.
+func bytesU64Vec(v []uint64) []byte {
+	out := make([]byte, 8*len(v))
+	for i, x := range v {
+		binary.LittleEndian.PutUint64(out[8*i:], x)
+	}
+	return out
+}
+
+func bytesU64Mat(M [][]uint64) []byte {
+	var out []byte
+	for i := range M {
+		out = append(out, bytesU64Vec(M[i])...)
+	}
+	return out
+}
+
+func bytesPolys(pp []*ring.Poly) []byte {
+	var out []byte
+	for _, p := range pp {
+		for _, c := range p.Coeffs[0] {
+			var b [8]byte
+			binary.LittleEndian.PutUint64(b[:], c)
+			out = append(out, b[:]...)
+		}
+	}
+	return out
+}
+
+// sampleFSPolys(rows × cols) of degree < s, lifted to NTT.
+func sampleFSPolys(r *ring.Ring, rows, cols, s int, rng *fsRNG) [][]*ring.Poly {
+	out := make([][]*ring.Poly, rows)
+	q := r.Modulus[0]
+	for i := 0; i < rows; i++ {
+		out[i] = make([]*ring.Poly, cols)
+		for j := 0; j < cols; j++ {
+			p := r.NewPoly()
+			for k := 0; k < s; k++ {
+				p.Coeffs[0][k] = rng.nextU64() % q
+			}
+			r.NTT(p, p)
+			out[i][j] = p
+		}
+	}
+	return out
+}
+
+// sampleFSMatrix(rows × cols) with entries in F_q.
+func sampleFSMatrix(rows, cols int, q uint64, rng *fsRNG) [][]uint64 {
+	M := make([][]uint64, rows)
+	for i := 0; i < rows; i++ {
+		M[i] = make([]uint64, cols)
+		for j := 0; j < cols; j++ {
+			M[i][j] = rng.nextU64() % q
+		}
+	}
+	return M
 }
 
 // randFieldElem draws a uniform element in [0,q) not in the forbidden set.
@@ -127,6 +227,46 @@ func addIntoUint(dst *[]uint64, src []uint64, q uint64) {
 	for i, v := range src {
 		(*dst)[i] = modAdd((*dst)[i], v, q)
 	}
+}
+
+// resetPoly sets all coefficients of p to zero.
+func resetPoly(p *ring.Poly) {
+	v := p.Coeffs[0]
+	for i := range v {
+		v[i] = 0
+	}
+}
+
+// isZeroPoly returns true if all coefficients of p are zero.
+func isZeroPoly(p *ring.Poly) bool {
+	for _, v := range p.Coeffs[0] {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// sumEvals returns Σ_{ω∈Ω} P(ω) mod q. scratch must be a *ring.Poly reused by caller.
+func sumEvals(r *ring.Ring, P *ring.Poly, omega []uint64, scratch *ring.Poly) uint64 {
+	q := r.Modulus[0]
+	r.InvNTT(P, scratch)
+	coeffs := scratch.Coeffs[0]
+	sum := uint64(0)
+	for _, w := range omega {
+		sum = modAdd(sum, EvalPoly(coeffs, w%q, q), q)
+	}
+	return sum
+}
+
+// sumPolyList computes ΣΩ for each polynomial in list.
+func sumPolyList(r *ring.Ring, polys []*ring.Poly, omega []uint64) []uint64 {
+	out := make([]uint64, len(polys))
+	scratch := r.NewPoly()
+	for i, p := range polys {
+		out[i] = sumEvals(r, p, omega, scratch)
+	}
+	return out
 }
 
 // lagrangeBasisNumerator returns Π_{j≠i} (X - x_j) as a coefficient slice.
@@ -229,33 +369,42 @@ func BuildRowPolynomial(ringQ *ring.Ring, row, omega []uint64, ell int) (poly *r
 //  BuildMaskPolynomials
 // -----------------------------------------------------------------------------
 /*
-BuildMaskPolynomials returns ρ random polynomials M₁…Mρ of degree ≤ dQ
-in NTT form such that      Σ_{ω∈Ω} M_i(ω) = 0     for every i.
+BuildMaskPolynomials returns ρ random polynomials M₁…Mρ of degree ≤ dQ in
+NTT form whose constant term cancels the Ω‑sum of the final
+Qᵢ(X) = Mᵢ(X) + Σ_t Γ′_{i,t}F_par,t(X) + Σ_u γ′_{i,u}F_agg,u(X).
 
 Args:
-  ringQ   – context (modulus q must not divide len(Ω))
-  rho     – number of polynomials
-  dQ      – max degree   (from Eq.(3) in the paper, typically dQ = s+ℓ−1 or 2d)
-  omega   – evaluation set Ω, given as raw field elements (coeff-domain)
+  ringQ       – context (modulus q must not divide len(Ω))
+  rho         – number of polynomials
+  dQ          – max degree (typically s+ℓ−1)
+  omega       – evaluation set Ω
+  GammaPrime  – ρ×|F_par| scalars Γ′
+  gammaPrime  – ρ×|F_agg| scalars γ′
+  sumFpar     – |F_par| precomputed ΣΩ F_par
+  sumFagg     – |F_agg| precomputed ΣΩ F_agg
 
-The construction picks random coefficients a₁…a_{dQ} and solves for a₀
-so the linear constraint is met:
-
-    a₀ = - ( Σ_{k=1}^{dQ} a_k S_k ) / S₀    with  S_k = Σ_{ω∈Ω} ω^k .
-
-It panics if q | |Ω|.
+For each i, random coefficients a₁…a_{dQ} are chosen, then a₀ is set so that
+ΣΩ Qᵢ(ω) = 0. It panics if q divides |Ω| or Ω has duplicates.
 */
-func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64) []*ring.Poly {
+func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPrime [][]uint64, gammaPrime [][]uint64, sumFpar []uint64, sumFagg []uint64) []*ring.Poly {
 	defer prof.Track(time.Now(), "BuildMaskPolynomials")
 
 	q := ringQ.Modulus[0]
 	s := uint64(len(omega))
 
 	if s == 0 {
-		log.Fatal("Ω must be non-empty")
+		panic("Ω must be non-empty")
+	}
+	seen := make(map[uint64]struct{}, len(omega))
+	for _, w := range omega {
+		wm := w % q
+		if _, ok := seen[wm]; ok {
+			panic(fmt.Sprintf("BuildMaskPolynomials: Ω contains duplicate element %d (mod q)", wm))
+		}
+		seen[wm] = struct{}{}
 	}
 	if q%s == 0 {
-		log.Fatalf("BuildMaskPolynomials: q (= %d) is multiple of |Ω| (= %d) – constraint not solvable", q, s)
+		panic(fmt.Sprintf("BuildMaskPolynomials: q (= %d) is multiple of |Ω| (= %d) – constraint not solvable", q, s))
 	}
 
 	// -- pre-compute S_k = Σ ω^k  for  k=0…dQ modulo q -----------------------
@@ -287,25 +436,35 @@ func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64) []*ring
 	// -- allocate output -------------------------------------------------------
 	M := make([]*ring.Poly, rho)
 
-	// -- build each polynomial -------------------------------------------------
 	for i := 0; i < rho; i++ {
 		coeffs := make([]uint64, ringQ.N)
-		// 1) random a_k  for k=1…dQ
 		for k := 1; k <= dQ; k++ {
 			coeffs[k] = randUint64Mod(q)
 		}
-		// 2) solve for a₀
 		var tmp uint64
 		for k := 1; k <= dQ; k++ {
-			tmp = (tmp + coeffs[k]*S[k]) % q
+			tmp = modAdd(tmp, modMul(coeffs[k], S[k], q), q)
 		}
-		coeffs[0] = (q - tmp) % q           // -Σ a_k S_k
-		coeffs[0] = (coeffs[0] * invS0) % q // * (S₀)^{-1}
+		for t, g := range GammaPrime[i] {
+			tmp = modAdd(tmp, modMul(g, sumFpar[t], q), q)
+		}
+		for u, g := range gammaPrime[i] {
+			tmp = modAdd(tmp, modMul(g, sumFagg[u], q), q)
+		}
+		coeffs[0] = modMul(modSub(0, tmp%q, q), invS0, q)
 
-		// 3) build, lift to NTT
 		p := ringQ.NewPoly()
 		copy(p.Coeffs[0], coeffs[:])
 		ringQ.NTT(p, p)
+		if DEBUG_SUMS {
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(p, coeff)
+			sum := uint64(0)
+			for _, w := range omega {
+				sum = modAdd(sum, EvalPoly(coeff.Coeffs[0], w%q, q), q)
+			}
+			fmt.Printf("[mask %d] ΣΩ M_i = %d\n", i, sum)
+		}
 		M[i] = p
 	}
 	return M
