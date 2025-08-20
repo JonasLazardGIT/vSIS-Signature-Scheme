@@ -68,7 +68,7 @@ The `RunPACSSimulation()` function executes a single interactive simulation of t
 * **Row Vector Construction:**
 
   ```go
-  rows := columnsToRows(ringQ, w1, w2, w3, ell, omega)
+  rows := columnsToRows(ringQ, w1, w2, w3, ell)
   ```
 
   Transforms the witness columns into row vectors, interpolated to degree $d = s + \ell - 1$.

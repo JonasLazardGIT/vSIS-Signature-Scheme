@@ -131,23 +131,9 @@ func RunPACSSimulation() bool {
 	px.Coeffs[0][1] = 1
 	pts := ringQ.NewPoly()
 	ringQ.NTT(px, pts)
-        omega := pts.Coeffs[0][:ncols]
-        if len(omega) == 0 {
-                panic("Ω must be non-empty")
-        }
-        seen := make(map[uint64]struct{}, len(omega))
-        for _, w := range omega {
-                wm := w % q
-                if _, ok := seen[wm]; ok {
-                        panic(fmt.Sprintf("RunPACSSimulation: Ω contains duplicate element %d (mod q)", wm))
-                }
-                seen[wm] = struct{}{}
-        }
-        if q%uint64(len(omega)) == 0 {
-                panic(fmt.Sprintf("RunPACSSimulation: q (= %d) is multiple of |Ω| (= %d)", q, len(omega)))
-        }
-        S0 := uint64(len(omega))
-        S0inv := modInv(S0, q)
+	omega := pts.Coeffs[0][:ncols]
+	S0 := uint64(len(omega))
+	S0inv := modInv(S0, q)
 
 	// Fill all new columns (coeff writes then NTT)
 	if err := ProverFillIntegerL2(ringQ, w1, mSig, spec, cols, glob, slack, S0, S0inv); err != nil {
@@ -201,16 +187,18 @@ func RunPACSSimulation() bool {
 	Rh := sha256.Sum256(polysToBytes(Rpolys))
 	fsMat := bytesU64Mat(C)
 	fsOmg := bytesU64Vec(omega)
-        fsGamma := newFSRNG("GammaPrime", root[:], Rh[:], fsMat, fsOmg)
-        fsGammaSc := newFSRNG("gammaPrime", root[:], Rh[:], fsMat, fsOmg)
-        GammaP := sampleFSPolys(ringQ, rho, totalParallel, len(omega), fsGamma)
-        gammaP := sampleFSMatrix(rho, totalAgg, q, fsGammaSc)
+	fsGamma := newFSRNG("GammaPrime", root[:], Rh[:], fsMat, fsOmg)
+	fsGammaSc := newFSRNG("gammaPrime", root[:], Rh[:], fsMat, fsOmg)
+	GammaP := sampleFSMatrix(rho, totalParallel, q, fsGamma)
+	gammaP := sampleFSMatrix(rho, totalAgg, q, fsGammaSc)
 
 	fmt.Printf("→ parallel rows: %d; aggregated rows: %d; witness cols: %d\n", totalParallel, totalAgg, len(w1))
 
 	dQ := len(w1) + ell - 1
-        M := BuildMaskPolynomials(ringQ, dQ, omega, Fpar, Fagg, GammaP, gammaP)
-        Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
+	sumFpar := sumPolyList(ringQ, Fpar, omega)
+	sumFagg := sumPolyList(ringQ, Fagg, omega)
+	M := BuildMaskPolynomials(ringQ, rho, dQ, omega, GammaP, gammaP, sumFpar, sumFagg)
+	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
 
 	// --------------------------------------------------------- verifier picks E
 	E := []int{1} // open the first point of Ω (simpler during debugging)
@@ -229,9 +217,9 @@ func RunPACSSimulation() bool {
 	// --------------------------------------------------------- pretty print
 	tr := transcript{}
 	tr.Root = hex.EncodeToString(root[:])
-        tr.Gamma0 = firstColumn(Gamma)
-        tr.Rhash = hex.EncodeToString(Rh[:])
-        tr.GammaPrime0 = firstColumnPoly(ringQ, GammaP)
+	tr.Gamma0 = firstColumn(Gamma)
+	tr.Rhash = hex.EncodeToString(Rh[:])
+	tr.GammaPrime0 = firstColumn(GammaP)
 	tr.E = E
 	tr.Flags = struct{ Merkle, Deg, LinMap, Eq4, Sum bool }{true, true, okLin, okEq4, okSum}
 	pretty(&tr)
@@ -279,7 +267,7 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 
 // Eq.(4) consistency on each opened index (unchanged)
 func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
-        Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]*ring.Poly, gammaP [][]uint64, omega []uint64) bool {
+	Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]uint64, gammaP [][]uint64, omega []uint64) bool {
 	defer prof.Track(time.Now(), "checkEq4OnOpening")
 
 	q := r.Modulus[0]
@@ -290,17 +278,17 @@ func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 		r.InvNTT(Q[i], tmp)
 		lhs := EvalPoly(tmp.Coeffs[0], w, q)
 
-                rhs := evalAt(r, M[i], w)
-                for t := range GammaP[i] {
-                        g := evalAt(r, GammaP[i][t], w)
-                        f := evalAt(r, Fpar[t], w)
-                        rhs = modAdd(rhs, modMul(g, f, q), q)
-                }
-                for t := 0; t < len(Fagg); t++ {
-                        g := gammaP[i][t]
-                        f := evalAt(r, Fagg[t], w)
-                        rhs = modAdd(rhs, modMul(g, f, q), q)
-                }
+		rhs := evalAt(r, M[i], w)
+		for t := range GammaP[i] {
+			g := GammaP[i][t]
+			f := evalAt(r, Fpar[t], w)
+			rhs = modAdd(rhs, modMul(g, f, q), q)
+		}
+		for t := 0; t < len(Fagg); t++ {
+			g := gammaP[i][t]
+			f := evalAt(r, Fagg[t], w)
+			rhs = modAdd(rhs, modMul(g, f, q), q)
+		}
 
 		if lhs != rhs {
 			return false
@@ -317,26 +305,13 @@ func evalAt(r *ring.Ring, p *ring.Poly, x uint64) uint64 {
 }
 
 func firstColumn(mat [][]uint64) [][]uint64 {
-        out := make([][]uint64, len(mat))
-        for i := range mat {
-                if len(mat[i]) > 0 {
-                        out[i] = []uint64{mat[i][0]}
-                }
-        }
-        return out
-}
-
-func firstColumnPoly(r *ring.Ring, mat [][]*ring.Poly) [][]uint64 {
-        out := make([][]uint64, len(mat))
-        coeff := r.NewPoly()
-        for i := range mat {
-                if len(mat[i]) > 0 {
-                        out[i] = make([]uint64, 1)
-                        r.InvNTT(mat[i][0], coeff)
-                        out[i][0] = coeff.Coeffs[0][0]
-                }
-        }
-        return out
+	out := make([][]uint64, len(mat))
+	for i := range mat {
+		if len(mat[i]) > 0 {
+			out[i] = []uint64{mat[i][0]}
+		}
+	}
+	return out
 }
 
 func pretty(tr *transcript) {

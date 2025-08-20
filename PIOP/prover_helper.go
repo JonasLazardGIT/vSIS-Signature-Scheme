@@ -375,124 +375,97 @@ Qᵢ(X) = Mᵢ(X) + Σ_t Γ′_{i,t}F_par,t(X) + Σ_u γ′_{i,u}F_agg,u(X).
 
 Args:
   ringQ       – context (modulus q must not divide len(Ω))
+  rho         – number of polynomials
   dQ          – max degree (typically s+ℓ−1)
   omega       – evaluation set Ω
-  Fpar        – slice of parallel constraint polynomials
-  Fagg        – slice of aggregated constraint polynomials
-  GammaPrime  – ρ×|F_par| polynomials Γ′
+  GammaPrime  – ρ×|F_par| scalars Γ′
   gammaPrime  – ρ×|F_agg| scalars γ′
+  sumFpar     – |F_par| precomputed ΣΩ F_par
+  sumFagg     – |F_agg| precomputed ΣΩ F_agg
 
 For each i, random coefficients a₁…a_{dQ} are chosen, then a₀ is set so that
 ΣΩ Qᵢ(ω) = 0. It panics if q divides |Ω| or Ω has duplicates.
 */
-func BuildMaskPolynomials(ringQ *ring.Ring, dQ int, omega []uint64, Fpar []*ring.Poly, Fagg []*ring.Poly, GammaPrime [][]*ring.Poly, gammaPrime [][]uint64) []*ring.Poly {
-       defer prof.Track(time.Now(), "BuildMaskPolynomials")
+func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPrime [][]uint64, gammaPrime [][]uint64, sumFpar []uint64, sumFagg []uint64) []*ring.Poly {
+	defer prof.Track(time.Now(), "BuildMaskPolynomials")
 
-       q := ringQ.Modulus[0]
-       s := uint64(len(omega))
+	q := ringQ.Modulus[0]
+	s := uint64(len(omega))
 
-       if s == 0 {
-               panic("Ω must be non-empty")
-       }
-       seen := make(map[uint64]struct{}, len(omega))
-       for _, w := range omega {
-               wm := w % q
-               if _, ok := seen[wm]; ok {
-                       panic(fmt.Sprintf("BuildMaskPolynomials: Ω contains duplicate element %d (mod q)", wm))
-               }
-               seen[wm] = struct{}{}
-       }
-       if q%s == 0 {
-               panic(fmt.Sprintf("BuildMaskPolynomials: q (= %d) is multiple of |Ω| (= %d) – constraint not solvable", q, s))
-       }
+	if s == 0 {
+		panic("Ω must be non-empty")
+	}
+	seen := make(map[uint64]struct{}, len(omega))
+	for _, w := range omega {
+		wm := w % q
+		if _, ok := seen[wm]; ok {
+			panic(fmt.Sprintf("BuildMaskPolynomials: Ω contains duplicate element %d (mod q)", wm))
+		}
+		seen[wm] = struct{}{}
+	}
+	if q%s == 0 {
+		panic(fmt.Sprintf("BuildMaskPolynomials: q (= %d) is multiple of |Ω| (= %d) – constraint not solvable", q, s))
+	}
 
-       // -- pre-compute S_k = Σ ω^k  for  k=0…dQ modulo q -----------------------
-       S := make([]uint64, dQ+1) // S[0]=|Ω|
-       S[0] = s % q
+	// -- pre-compute S_k = Σ ω^k  for  k=0…dQ modulo q -----------------------
+	S := make([]uint64, dQ+1) // S[0]=|Ω|
+	S[0] = s % q
 
-       // powersTmp[j] will hold ω_j^k
-       powersTmp := make([]uint64, len(omega))
-       for k := 1; k <= dQ; k++ {
-               sum := uint64(0)
-               for j, w := range omega {
-                       if k == 1 {
-                               powersTmp[j] = w % q
-                       } else {
-                               powersTmp[j] = (powersTmp[j] * w) % q // ω^k
-                       }
-                       sum += powersTmp[j]
-                       if sum >= q {
-                               sum -= q
-                       }
-               }
-               S[k] = sum
-       }
+	// powersTmp[j] will hold ω_j^k
+	powersTmp := make([]uint64, len(omega))
+	for k := 1; k <= dQ; k++ {
+		sum := uint64(0)
+		for j, w := range omega {
+			if k == 1 {
+				powersTmp[j] = w % q
+			} else {
+				powersTmp[j] = (powersTmp[j] * w) % q // ω^k
+			}
+			sum += powersTmp[j]
+			if sum >= q {
+				sum -= q
+			}
+		}
+		S[k] = sum
+	}
 
-       // Precompute evaluations of Fpar at Ω
-       fpEval := make([][]uint64, len(Fpar))
-       tmpPoly := ringQ.NewPoly()
-       for t := range Fpar {
-               ringQ.InvNTT(Fpar[t], tmpPoly)
-               fpEval[t] = make([]uint64, len(omega))
-               for j, w := range omega {
-                       fpEval[t][j] = EvalPoly(tmpPoly.Coeffs[0], w%q, q)
-               }
-       }
+	// -- modular inverse of S₀ -------------------------------------------------
+	// q is prime in lattice settings, so inverse exists.
+	invS0 := ring.ModExp(S[0], q-2, q)
 
-       // Precompute ΣΩ Fagg_u
-       sumFagg := make([]uint64, len(Fagg))
-       for u := range Fagg {
-               ringQ.InvNTT(Fagg[u], tmpPoly)
-               var sum uint64
-               for _, w := range omega {
-                       sum = modAdd(sum, EvalPoly(tmpPoly.Coeffs[0], w%q, q), q)
-               }
-               sumFagg[u] = sum
-       }
+	// -- allocate output -------------------------------------------------------
+	M := make([]*ring.Poly, rho)
 
-       // -- modular inverse of S₀ -------------------------------------------------
-       // q is prime in lattice settings, so inverse exists.
-       invS0 := ring.ModExp(S[0], q-2, q)
+	for i := 0; i < rho; i++ {
+		coeffs := make([]uint64, ringQ.N)
+		for k := 1; k <= dQ; k++ {
+			coeffs[k] = randUint64Mod(q)
+		}
+		var tmp uint64
+		for k := 1; k <= dQ; k++ {
+			tmp = modAdd(tmp, modMul(coeffs[k], S[k], q), q)
+		}
+		for t, g := range GammaPrime[i] {
+			tmp = modAdd(tmp, modMul(g, sumFpar[t], q), q)
+		}
+		for u, g := range gammaPrime[i] {
+			tmp = modAdd(tmp, modMul(g, sumFagg[u], q), q)
+		}
+		coeffs[0] = modMul(modSub(0, tmp%q, q), invS0, q)
 
-       // -- allocate output -------------------------------------------------------
-       rho := len(GammaPrime)
-       M := make([]*ring.Poly, rho)
-
-       gpCoeff := ringQ.NewPoly()
-       for i := 0; i < rho; i++ {
-               coeffs := make([]uint64, ringQ.N)
-               for k := 1; k <= dQ; k++ {
-                       coeffs[k] = randUint64Mod(q)
-               }
-               var tmp uint64
-               for k := 1; k <= dQ; k++ {
-                       tmp = modAdd(tmp, modMul(coeffs[k], S[k], q), q)
-               }
-               for t := range Fpar {
-                       ringQ.InvNTT(GammaPrime[i][t], gpCoeff)
-                       for j, w := range omega {
-                               g := EvalPoly(gpCoeff.Coeffs[0], w%q, q)
-                               tmp = modAdd(tmp, modMul(g, fpEval[t][j], q), q)
-                       }
-               }
-               for u := range Fagg {
-                       tmp = modAdd(tmp, modMul(gammaPrime[i][u], sumFagg[u], q), q)
-               }
-               coeffs[0] = modMul(modSub(0, tmp%q, q), invS0, q)
-
-               p := ringQ.NewPoly()
-               copy(p.Coeffs[0], coeffs[:])
-               ringQ.NTT(p, p)
-               if DEBUG_SUMS {
-                       coeff := ringQ.NewPoly()
-                       ringQ.InvNTT(p, coeff)
-                       sum := uint64(0)
-                       for _, w := range omega {
-                               sum = modAdd(sum, EvalPoly(coeff.Coeffs[0], w%q, q), q)
-                       }
-                       fmt.Printf("[mask %d] ΣΩ M_i = %d\n", i, sum)
-               }
-               M[i] = p
-       }
-       return M
+		p := ringQ.NewPoly()
+		copy(p.Coeffs[0], coeffs[:])
+		ringQ.NTT(p, p)
+		if DEBUG_SUMS {
+			coeff := ringQ.NewPoly()
+			ringQ.InvNTT(p, coeff)
+			sum := uint64(0)
+			for _, w := range omega {
+				sum = modAdd(sum, EvalPoly(coeff.Coeffs[0], w%q, q), q)
+			}
+			fmt.Printf("[mask %d] ΣΩ M_i = %d\n", i, sum)
+		}
+		M[i] = p
+	}
+	return M
 }

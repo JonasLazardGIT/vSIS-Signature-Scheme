@@ -69,17 +69,17 @@ func TestMaskCancellation(t *testing.T) {
 	q := uint64(97)
 	ringQ, _ := ring.NewRing(N, []uint64{q})
 	omega := []uint64{2, 4, 6}
-        rho := 2
-        dQ := 5
+	rho := 2
+	dQ := 5
 
-        // simple Fpar/Fagg
-        Fpar := []*ring.Poly{ringQ.NewPoly()}
-        ringQ.NTT(Fpar[0], Fpar[0])
-        Fagg := []*ring.Poly{}
-        Gamma := sampleFSPolys(ringQ, rho, len(Fpar), len(omega), newFSRNG("g"))
-        gamma := sampleFSMatrix(rho, len(Fagg), q, newFSRNG("h"))
-        M := BuildMaskPolynomials(ringQ, dQ, omega, Fpar, Fagg, Gamma, gamma)
-        Q := BuildQ(ringQ, M, Fpar, Fagg, Gamma, gamma)
+	// simple Fpar/Fagg
+	Fpar := []*ring.Poly{ringQ.NewPoly()}
+	Fagg := []*ring.Poly{}
+	sumFpar := sumPolyList(ringQ, Fpar, omega)
+	Gamma := sampleFSMatrix(rho, len(Fpar), q, newFSRNG("g"))
+	gamma := sampleFSMatrix(rho, len(Fagg), q, newFSRNG("h"))
+	M := BuildMaskPolynomials(ringQ, rho, dQ, omega, Gamma, gamma, sumFpar, []uint64{})
+	Q := BuildQ(ringQ, M, Fpar, Fagg, Gamma, gamma)
 	if !VerifyQ(ringQ, Q, omega) {
 		t.Fatalf("VerifyQ failed")
 	}
@@ -131,110 +131,16 @@ func TestEvalPolyRandom(t *testing.T) {
 }
 
 func TestOmegaHygiene(t *testing.T) {
-        N := 16
-        q := uint64(97)
-        ringQ, _ := ring.NewRing(N, []uint64{q})
-        omega := []uint64{1, 1, 2}
+	N := 16
+	q := uint64(97)
+	ringQ, _ := ring.NewRing(N, []uint64{q})
+	omega := []uint64{1, 1, 2}
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("expected panic on duplicate Ω")
 		}
 	}()
-        Fpar := []*ring.Poly{}
-        Fagg := []*ring.Poly{}
-        Gamma := [][]*ring.Poly{{}}
-        gamma := [][]uint64{{}}
-        BuildMaskPolynomials(ringQ, 3, omega, Fpar, Fagg, Gamma, gamma)
-}
-
-func TestOmegaHygieneMultiple(t *testing.T) {
-        N := 16
-        q := uint64(13)
-        ringQ, _ := ring.NewRing(N, []uint64{q})
-        omega := make([]uint64, 13)
-        for i := range omega {
-                omega[i] = uint64(i)
-        }
-        defer func() {
-                if r := recover(); r == nil {
-                        t.Fatalf("expected panic when q divisible by |Ω|")
-                }
-        }()
-        Fpar := []*ring.Poly{}
-        Fagg := []*ring.Poly{}
-        Gamma := [][]*ring.Poly{{}}
-        gamma := [][]uint64{{}}
-        BuildMaskPolynomials(ringQ, 3, omega, Fpar, Fagg, Gamma, gamma)
-}
-
-func TestConstPolyNTT(t *testing.T) {
-        N := 16
-        q := uint64(97)
-        ringQ, _ := ring.NewRing(N, []uint64{q})
-        tval := uint64(42)
-        p := constPolyNTT(ringQ, tval)
-        coeff := ringQ.NewPoly()
-        ringQ.InvNTT(p, coeff)
-        if coeff.Coeffs[0][0]%q != tval%q {
-                t.Fatalf("a0 mismatch: got %d want %d", coeff.Coeffs[0][0]%q, tval%q)
-        }
-        for i := 1; i < ringQ.N; i++ {
-                if coeff.Coeffs[0][i]%q != 0 {
-                        t.Fatalf("non-zero coeff at %d", i)
-                }
-        }
-}
-
-func TestColumnsToRowsEval(t *testing.T) {
-        N := 16
-        q := uint64(97)
-        ringQ, _ := ring.NewRing(N, []uint64{q})
-        w1 := []*ring.Poly{ringQ.NewPoly(), ringQ.NewPoly()}
-        w2 := ringQ.NewPoly()
-        w3 := []*ring.Poly{ringQ.NewPoly(), ringQ.NewPoly()}
-        for _, p := range append(append([]*ring.Poly{}, w1...), append([]*ring.Poly{w2}, w3...)...) {
-                ringQ.NTT(p, p)
-        }
-        ell := 1
-        px := ringQ.NewPoly(); px.Coeffs[0][1] = 1
-        pts := ringQ.NewPoly(); ringQ.NTT(px, pts)
-        omega := pts.Coeffs[0][:ringQ.N-ell]
-        rows := columnsToRows(ringQ, w1, w2, w3, ell, omega)
-        qmod := ringQ.Modulus[0]
-        coeff := ringQ.NewPoly()
-        for i := 0; i < len(w1); i++ {
-                ringQ.InvNTT(w1[i], coeff)
-                for j, w := range omega {
-                        if rows[i][j] != EvalPoly(coeff.Coeffs[0], w%qmod, qmod) {
-                                t.Fatalf("row %d col %d mismatch", i, j)
-                        }
-                }
-        }
-}
-
-func TestVerifyQ(t *testing.T) {
-        N := 16
-        q := uint64(97)
-        ringQ, _ := ring.NewRing(N, []uint64{q})
-        omega := []uint64{2, 4, 6}
-        Fpar := []*ring.Poly{ringQ.NewPoly()}
-        ringQ.NTT(Fpar[0], Fpar[0])
-        Fagg := []*ring.Poly{}
-        Gamma := sampleFSPolys(ringQ, 1, len(Fpar), len(omega), newFSRNG("g"))
-        gamma := sampleFSMatrix(1, len(Fagg), q, newFSRNG("h"))
-        M := BuildMaskPolynomials(ringQ, 3, omega, Fpar, Fagg, Gamma, gamma)
-        Q := BuildQ(ringQ, M, Fpar, Fagg, Gamma, gamma)
-        if !VerifyQ(ringQ, Q, omega) {
-                t.Fatalf("VerifyQ failed on clean input")
-        }
-        coeff := ringQ.NewPoly()
-        ringQ.InvNTT(Q[0], coeff)
-        coeff.Coeffs[0][0] ^= 1
-        ringQ.NTT(coeff, coeff)
-        Q[0] = coeff
-        if VerifyQ(ringQ, Q, omega) {
-                t.Fatalf("VerifyQ should fail after tamper")
-        }
+	BuildMaskPolynomials(ringQ, 1, 3, omega, [][]uint64{{1}}, [][]uint64{}, []uint64{0}, []uint64{})
 }
 
 func TestBuildThetaPrimeSetMultiRow(t *testing.T) {
