@@ -538,6 +538,63 @@ func buildFagg(r *ring.Ring,
 	return out
 }
 
+// buildFaggOnOmega – BBS aggregated rows (Eq. 3) using Θ′(X) on Ω.
+//
+// Fagg_j(X) = (b1⊙A)_j(X) · S(X)  −  (A_j(X)·S(X))·X1(X)  −  B0_j(X)
+func buildFaggOnOmega(
+	r *ring.Ring,
+	w1 []*ring.Poly, w2 *ring.Poly,
+	theta *ThetaPrime, // built with BuildThetaPrimeSet(..., omega)
+	mSig int,
+) []*ring.Poly {
+	defer prof.Track(time.Now(), "buildFaggOnOmega")
+
+	out := make([]*ring.Poly, len(theta.ARows))
+	tmp := r.NewPoly()
+	left1 := r.NewPoly()
+	left2 := r.NewPoly()
+	right := r.NewPoly()
+
+	for j := range theta.ARows {
+		// clear accumulators
+		resetPoly(left1)
+		resetPoly(left2)
+		resetPoly(right)
+
+		// Σ_t  (b1⊙A)_j,t  *  s_t
+		for t := 0; t < mSig; t++ {
+			r.MulCoeffs(theta.B1Rows[j], theta.ARows[j][t], tmp) // b1_j * A_j,t
+			r.MulCoeffs(tmp, w1[t], tmp)
+			addInto(r, left1, tmp)
+		}
+		// Σ_t  (A_j,t * s_t) * x1
+		for t := 0; t < mSig; t++ {
+			r.MulCoeffs(theta.ARows[j][t], w1[t], tmp)
+			r.MulCoeffs(tmp, w2, tmp)
+			addInto(r, left2, tmp)
+		}
+		// B0 · (1; u; x0)  : constant + message + randomness blocks
+		addInto(r, right, theta.B0Const[j])
+		// message block
+		for i := range theta.B0Msg {
+			r.MulCoeffs(theta.B0Msg[i][j], w1[mSig+i], tmp)
+			addInto(r, right, tmp)
+		}
+		// randomness block
+		off := mSig + len(theta.B0Msg)
+		for i := range theta.B0Rnd {
+			r.MulCoeffs(theta.B0Rnd[i][j], w1[off+i], tmp)
+			addInto(r, right, tmp)
+		}
+
+		// F'_j(X) = left1 - left2 - right
+		r.Sub(left1, left2, tmp)
+		r.Sub(tmp, right, tmp)
+		out[j] = tmp.CopyNew()
+	}
+	return out
+}
+
 // random deg ≤ s-1 polys
 func sampleRandPolys(r *ring.Ring, rows, cols, s int) [][]*ring.Poly {
 	defer prof.Track(time.Now(), "sampleRandPolys")

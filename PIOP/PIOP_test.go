@@ -186,12 +186,11 @@ func TestIntegerL2Gadget(t *testing.T) {
 	mSig := 2
 	w1 := make([]*ring.Poly, mSig)
 	for tIdx := 0; tIdx < mSig; tIdx++ {
-		p := ringQ.NewPoly()
+		vals := make([]uint64, s)
 		for j := 0; j < s; j++ {
-			p.Coeffs[0][j] = uint64(tIdx + j + 1)
+			vals[j] = uint64(tIdx + j + 1)
 		}
-		ringQ.NTT(p, p)
-		w1[tIdx] = p
+		w1[tIdx] = buildValueRow(ringQ, vals, omega, ell)
 	}
 
 	cols := appendDecompositionColumns(ringQ, spec.LS, spec.W)

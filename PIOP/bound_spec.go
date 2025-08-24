@@ -15,6 +15,12 @@ type BoundSpec struct {
 // NewBoundSpec returns the radix decomposition of beta^2 in base R=2^w.
 // R must satisfy R < q and beta^2 < q.
 func NewBoundSpec(q, beta uint64, w, ell int) BoundSpec {
+	if (q & 1) == 0 {
+		panic("q must be odd")
+	}
+	if ell < 1 {
+		panic("ell must be ≥ 1")
+	}
 	R := uint64(1) << uint(w)
 	if R >= q {
 		panic("R >= q")

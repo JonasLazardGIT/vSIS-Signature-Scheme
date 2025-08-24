@@ -67,7 +67,9 @@ func ProverFillIntegerL2(
 	for j := 0; j < s; j++ {
 		sum := new(big.Int)
 		for k := 0; k < mSig; k++ {
-			a := new(big.Int).SetUint64(coeffW1[k].Coeffs[0][j])
+			// Evaluate P_k at ω_j
+			av := EvalPoly(coeffW1[k].Coeffs[0], omega[j]%q, q)
+			a := new(big.Int).SetUint64(av)
 			if a.Cmp(halfq) > 0 {
 				a.Sub(a, bq)
 			}

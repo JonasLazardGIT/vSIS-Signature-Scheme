@@ -78,24 +78,10 @@ func RunPACSSimulation() bool {
 	w1, w2, w3 := BuildWitnessFromDisk() // helper in another PIOP file
 	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
 
-	// ─── after: w1, w2, w3 := BuildWitnessFromDisk() ──────────────
-	// β and radix R=2^w
-	ell := 1 // exactly one mask coordinate per row
-	beta := par.Beta
-	if beta*beta >= q {
-		beta = uint64(math.Sqrt(float64(q - 1)))
-	}
-	wbits := 12
-	spec := NewBoundSpec(q, beta, wbits, ell)
-
-	// signature block length before appending new columns
-	mSig := len(w1) - len(B0m) - len(B0r)
-
-	// Allocate witness columns for decomposition
-	cols := appendDecompositionColumns(ringQ, spec.LS, spec.W)
-
-	// build the evaluation grid once: ω = {1, g, g^2, …}
-	ncols := 8 // keep small for unit test speed
+	// --- NEW: remake signature rows as coefficient-packing rows over Ω -------------
+	ell := 1 // keep your LVCS mask-per-row setting
+	// build the evaluation grid Ω (size ncols used below)
+	ncols := 8
 	px := ringQ.NewPoly()
 	px.Coeffs[0][1] = 1
 	pts := ringQ.NewPoly()
@@ -106,6 +92,60 @@ func RunPACSSimulation() bool {
 	}
 	S0 := uint64(len(omega))
 	S0inv := modInv(S0, q)
+
+	// length of signature block
+	mSig := len(w1) - len(B0m) - len(B0r)
+
+	// Rebuild top mSig rows: P_t(ω_j) = a_{t,j} (coefficient packing + blinding)
+	for t := 0; t < mSig; t++ {
+		coeff := ringQ.NewPoly()
+		ringQ.InvNTT(w1[t], coeff) // coefficient vector of the ring poly
+		vals := make([]uint64, len(omega))
+		for j := 0; j < len(omega); j++ {
+			// **Coefficient packing**: per-column value is the coefficient a_{t,j}
+			vals[j] = coeff.Coeffs[0][j] % q
+		}
+		w1[t] = buildValueRow(ringQ, vals, omega, ell) // deg ≤ s+ell-1 row poly
+	}
+
+	// Rebuild message and x0 rows as **column-constant** packing rows.
+	for i := 0; i < len(B0m); i++ {
+		tmp := ringQ.NewPoly()
+		ringQ.InvNTT(w1[mSig+i], tmp)
+		c := tmp.Coeffs[0][0] % q
+		vals := make([]uint64, len(omega))
+		for j := range vals {
+			vals[j] = c
+		}
+		w1[mSig+i] = buildValueRow(ringQ, vals, omega, ell)
+	}
+	off := mSig + len(B0m)
+	for i := 0; i < len(B0r); i++ {
+		tmp := ringQ.NewPoly()
+		ringQ.InvNTT(w1[off+i], tmp)
+		c := tmp.Coeffs[0][0] % q
+		vals := make([]uint64, len(omega))
+		for j := range vals {
+			vals[j] = c
+		}
+		w1[off+i] = buildValueRow(ringQ, vals, omega, ell)
+	}
+
+	// Recompute w3 = w1 * w2 using the updated packing rows.
+	for i := 0; i < len(w1); i++ {
+		ringQ.MulCoeffs(w1[i], w2, w3[i])
+	}
+
+	// β and radix R=2^w
+	beta := par.Beta
+	if beta*beta >= q {
+		beta = uint64(math.Sqrt(float64(q - 1)))
+	}
+	wbits := 12
+	spec := NewBoundSpec(q, beta, wbits, ell)
+
+	// Allocate witness columns for decomposition
+	cols := appendDecompositionColumns(ringQ, spec.LS, spec.W)
 
 	// carry width Wc = ceil(log2(|Ω|)) + 1
 	Wc := 1
@@ -187,7 +227,8 @@ func RunPACSSimulation() bool {
 	FparSlackB := buildFparGlobSlackBits(ringQ, S0inv, spec.W, slack)
 	Fpar := append(append(append(FparCore, FparDec...), FparCarr...), FparSlackB...)
 
-	FaggBBS := buildFagg(ringQ, w1[:origW1Len], w2, A, b1, B0c, B0m, B0r)
+	theta := BuildThetaPrimeSet(ringQ, A, b1, B0c, B0m, B0r, omega)
+	FaggBBS := buildFaggOnOmega(ringQ, w1[:origW1Len], w2, theta, mSig)
 	FaggInt := buildFaggIntegerSumDelta(ringQ, spec, S0, S0inv, cols, glob, slack, omega)
 	Fagg := append(FaggBBS, FaggInt...)
 
