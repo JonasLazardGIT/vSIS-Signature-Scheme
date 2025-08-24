@@ -418,7 +418,7 @@ func saveStatsJSON(stats summaryStats, path string) error {
 // --------------------------------------- main ---------------------------------------
 
 func main() {
-	const runs = 10
+	const runs = 50
 	const outDir = "Read_signatures"
 
 	Parameters.Generate()
