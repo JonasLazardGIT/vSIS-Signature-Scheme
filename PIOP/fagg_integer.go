@@ -49,20 +49,27 @@ func buildFparGlobCarryBits(r *ring.Ring, S0inv uint64, Wc int, g GlobCarry) (Fp
 		r.Sub(g.C[l], sum, p)
 		Fpar = append(Fpar, p)
 	}
+	// Boundary carries must be zero
+	Fpar = append(Fpar, g.C[0].CopyNew())
+	Fpar = append(Fpar, g.C[len(g.C)-1].CopyNew())
 	return
 }
 
 // buildFaggIntegerSum constructs aggregated limb-sum rows without slack.
-func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, _ uint64, S0inv uint64, cols DecompCols, g GlobCarry) (Fagg []*ring.Poly) {
+func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, cols DecompCols, g GlobCarry, omega []uint64) (Fagg []*ring.Poly) {
 	defer prof.Track(time.Now(), "buildFaggIntegerSum")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
+	scratch := r.NewPoly()
 	for l := 0; l < LS; l++ {
+		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
+		constD := makeConstRow(r, modMul(sumOmegaD, S0inv, q))
+
 		p := r.NewPoly()
-		r.Add(p, cols.D[l], p)
+		r.Add(p, constD, p)
 		r.Add(p, g.C[l], p)
 
-		Bscaled := (spec.Beta2[l] % q) * (S0inv % q) % q
-		constB := constPolyNTT(r, Bscaled)
+		Bscaled := modMul(spec.Beta2[l]%q, S0inv%q, q)
+		constB := makeConstRow(r, Bscaled)
 		r.Sub(p, constB, p)
 
 		tmp := r.NewPoly()
@@ -96,25 +103,21 @@ func buildFparGlobSlackBits(r *ring.Ring, S0inv uint64, W int, s GlobSlack) (Fpa
 }
 
 // buildFaggIntegerSumDelta includes slack digits in the aggregated rows.
-func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, _ uint64, S0inv uint64, cols DecompCols, g GlobCarry, s GlobSlack) (Fagg []*ring.Poly) {
+func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, cols DecompCols, g GlobCarry, s GlobSlack, omega []uint64) (Fagg []*ring.Poly) {
 	defer prof.Track(time.Now(), "buildFaggIntegerSumDelta")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
+	scratch := r.NewPoly()
 	for l := 0; l < LS; l++ {
-		coeff := r.NewPoly()
-		r.InvNTT(cols.D[l], coeff)
-		sum := uint64(0)
-		for j := 0; j < r.N; j++ {
-			sum = (sum + coeff.Coeffs[0][j]) % q
-		}
-		constD := constPolyNTT(r, (sum*S0inv)%q)
+		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
+		constD := makeConstRow(r, modMul(sumOmegaD, S0inv, q))
 
 		p := r.NewPoly()
 		r.Add(p, constD, p)
 		r.Add(p, g.C[l], p)
 		r.Add(p, s.D[l], p)
 
-		Bscaled := (spec.Beta2[l] % q) * (S0inv % q) % q
-		constB := constPolyNTT(r, Bscaled)
+		Bscaled := modMul(spec.Beta2[l]%q, S0inv%q, q)
+		constB := makeConstRow(r, Bscaled)
 		r.Sub(p, constB, p)
 
 		tmp := r.NewPoly()

@@ -7,25 +7,6 @@ import (
 	prof "vSIS-Signature/prof"
 )
 
-// Sqs(X) = sum_{k<mSig} W1[k]^2 (Hadamard square per coefficient)
-func buildSqs(r *ring.Ring, w1 []*ring.Poly, mSig int) *ring.Poly {
-	defer prof.Track(time.Now(), "buildSqs")
-	q := r.Modulus[0]
-	acc := r.NewPoly() // coefficient domain accumulator
-	tmp := r.NewPoly()
-	for k := 0; k < mSig; k++ {
-		// lift column k to coefficient domain
-		r.InvNTT(w1[k], tmp)
-		for j := 0; j < r.N; j++ {
-			v := tmp.Coeffs[0][j] % q
-			acc.Coeffs[0][j] = (acc.Coeffs[0][j] + (v*v)%q) % q
-		}
-	}
-	// bring back to NTT domain for subsequent algebra
-	r.NTT(acc, acc)
-	return acc
-}
-
 type DecompCols struct {
 	D   []*ring.Poly   // [LS] digits
 	T   []*ring.Poly   // [LS+1] remainders
@@ -94,28 +75,6 @@ func buildFparIntegerDecomp(r *ring.Ring, Sqs *ring.Poly, spec BoundSpec, cols D
 	// Final remainder T_LS should be zero
 	Fpar = append(Fpar, cols.T[LS].CopyNew())
 	return
-}
-
-// scalePolyNTT multiplies polynomial a by scalar c (mod q) and writes to out.
-// out may alias a.
-func scalePolyNTT(r *ring.Ring, a *ring.Poly, c uint64, out *ring.Poly) {
-	if out != a {
-		copy(out.Coeffs[0], a.Coeffs[0])
-	}
-	q := r.Modulus[0]
-	for i := range out.Coeffs[0] {
-		out.Coeffs[0][i] = modMul(out.Coeffs[0][i], c, q)
-	}
-}
-
-// constPolyNTT returns a constant polynomial t.
-func constPolyNTT(r *ring.Ring, t uint64) *ring.Poly {
-	p := r.NewPoly()
-	for i := range p.Coeffs[0] {
-		p.Coeffs[0][i] = t
-	}
-	r.NTT(p, p)
-	return p
 }
 
 // bitnessPoly returns polynomial enforcing bitness: b^2 - b, with Hadamard square in coeff domain.

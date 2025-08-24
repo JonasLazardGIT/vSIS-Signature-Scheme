@@ -37,14 +37,15 @@ func ProverFillIntegerL2(
 	r *ring.Ring, w1 []*ring.Poly, mSig int,
 	spec BoundSpec,
 	cols DecompCols, glob GlobCarry, slack GlobSlack,
+	omega []uint64, ell int,
 	S0, S0inv uint64,
-) error {
+) (*ring.Poly, error) {
 	defer prof.Track(time.Now(), "ProverFillIntegerL2")
 	q := r.Modulus[0]
-	N := r.N
 	R := spec.R
 	LS := spec.LS
 	W := spec.W
+	s := len(omega)
 
 	coeffW1 := make([]*ring.Poly, mSig)
 	for k := 0; k < mSig; k++ {
@@ -52,17 +53,18 @@ func ProverFillIntegerL2(
 		r.InvNTT(w1[k], coeffW1[k])
 	}
 
-	SRow := make([]*big.Int, N)
+	SRow := make([]*big.Int, s)
 	Drows := make([][]uint64, LS)
 	for l := 0; l < LS; l++ {
-		Drows[l] = make([]uint64, N)
+		Drows[l] = make([]uint64, s)
 	}
 
 	bq := new(big.Int).SetUint64(q)
 	halfq := new(big.Int).Rsh(bq, 1)
 	Rbig := new(big.Int).SetUint64(R)
 
-	for j := 0; j < N; j++ {
+	sqsVals := make([]uint64, s)
+	for j := 0; j < s; j++ {
 		sum := new(big.Int)
 		for k := 0; k < mSig; k++ {
 			a := new(big.Int).SetUint64(coeffW1[k].Coeffs[0][j])
@@ -73,6 +75,7 @@ func ProverFillIntegerL2(
 			sum.Add(sum, a)
 		}
 		SRow[j] = sum
+		sqsVals[j] = modU64(sum, q)
 		tmp := new(big.Int).Set(sum)
 		for l := 0; l < LS; l++ {
 			if tmp.Sign() == 0 {
@@ -85,22 +88,24 @@ func ProverFillIntegerL2(
 		}
 	}
 
+	Sqs := buildValueRow(r, sqsVals, omega, ell)
+
 	for l := 0; l < LS; l++ {
-		fillRowUint64(r, cols.D[l], Drows[l], q)
+		cols.D[l] = buildValueRow(r, Drows[l], omega, ell)
 		for u := 0; u < W; u++ {
-			Bu := make([]uint64, N)
-			for j := 0; j < N; j++ {
+			Bu := make([]uint64, s)
+			for j := 0; j < s; j++ {
 				Bu[j] = (Drows[l][j] >> uint(u)) & 1
 			}
-			fillRowUint64(r, cols.Bit[l][u], Bu, q)
+			cols.Bit[l][u] = buildValueRow(r, Bu, omega, ell)
 		}
 	}
 
 	Trows := make([][]uint64, LS+1)
 	for l := 0; l <= LS; l++ {
-		Trows[l] = make([]uint64, N)
+		Trows[l] = make([]uint64, s)
 	}
-	for j := 0; j < N; j++ {
+	for j := 0; j < s; j++ {
 		t := new(big.Int).Set(SRow[j])
 		Trows[0][j] = modU64(t, q)
 		for l := 0; l < LS; l++ {
@@ -110,18 +115,18 @@ func ProverFillIntegerL2(
 		}
 	}
 	for l := 0; l <= LS; l++ {
-		fillRowUint64(r, cols.T[l], Trows[l], q)
+		cols.T[l] = buildValueRow(r, Trows[l], omega, ell)
 	}
 
 	SumDigits := make([]*big.Int, LS)
 	totalSum := new(big.Int)
 	for l := 0; l < LS; l++ {
 		SumDigits[l] = new(big.Int)
-		for j := 0; j < N; j++ {
+		for j := 0; j < s; j++ {
 			SumDigits[l].Add(SumDigits[l], new(big.Int).SetUint64(Drows[l][j]))
 		}
 	}
-	for j := 0; j < N; j++ {
+	for j := 0; j < s; j++ {
 		totalSum.Add(totalSum, SRow[j])
 	}
 
@@ -145,17 +150,7 @@ func ProverFillIntegerL2(
 
 	fillSlackDigits(r, slack, DeltaLimbs, S0inv, q, R, W)
 	fillCarries(r, glob, carries, S0inv, q, R)
-	return nil
-}
-
-func fillRowUint64(r *ring.Ring, p *ring.Poly, vals []uint64, q uint64) {
-	for j := 0; j < len(vals); j++ {
-		p.Coeffs[0][j] = vals[j] % q
-	}
-	for j := len(vals); j < len(p.Coeffs[0]); j++ {
-		p.Coeffs[0][j] = 0
-	}
-	r.NTT(p, p)
+	return Sqs, nil
 }
 
 func fillConstUint64(r *ring.Ring, p *ring.Poly, val uint64, q uint64) {

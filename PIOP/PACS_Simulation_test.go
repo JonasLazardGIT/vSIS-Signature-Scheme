@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math"
 	"testing"
 	"time"
 
@@ -79,17 +80,38 @@ func RunPACSSimulation() bool {
 
 	// ─── after: w1, w2, w3 := BuildWitnessFromDisk() ──────────────
 	// β and radix R=2^w
+	ell := 1 // exactly one mask coordinate per row
 	beta := par.Beta
+	if beta*beta >= q {
+		beta = uint64(math.Sqrt(float64(q - 1)))
+	}
 	wbits := 12
-	spec := NewBoundSpec(q, beta, wbits)
+	spec := NewBoundSpec(q, beta, wbits, ell)
 
-	// signature block length and Sqs(X) before appending new columns
+	// signature block length before appending new columns
 	mSig := len(w1) - len(B0m) - len(B0r)
-	Sqs := buildSqs(ringQ, w1[:mSig], mSig)
 
-	// Allocate witness columns for decomposition, carries, slack
+	// Allocate witness columns for decomposition
 	cols := appendDecompositionColumns(ringQ, spec.LS, spec.W)
-	Wc := spec.W + 2
+
+	// build the evaluation grid once: ω = {1, g, g^2, …}
+	ncols := 8 // keep small for unit test speed
+	px := ringQ.NewPoly()
+	px.Coeffs[0][1] = 1
+	pts := ringQ.NewPoly()
+	ringQ.NTT(px, pts)
+	omega := pts.Coeffs[0][:ncols]
+	if err := checkOmega(omega, q); err != nil {
+		panic(err)
+	}
+	S0 := uint64(len(omega))
+	S0inv := modInv(S0, q)
+
+	// carry width Wc = ceil(log2(|Ω|)) + 1
+	Wc := 1
+	for (1 << (Wc - 1)) < len(omega) {
+		Wc++
+	}
 	glob := appendGlobalCarrys(ringQ, spec.LS, Wc)
 	slack := appendGlobalSlack(ringQ, spec.LS, spec.W)
 
@@ -123,20 +145,9 @@ func RunPACSSimulation() bool {
 		}
 	}
 
-	// Ω and S0 after appending columns
-	ell := 1 // exactly one mask coordinate per row
-	ncols := ringQ.N - ell
-	// build the evaluation grid once: ω = {1, g, g^2, …}
-	px := ringQ.NewPoly()
-	px.Coeffs[0][1] = 1
-	pts := ringQ.NewPoly()
-	ringQ.NTT(px, pts)
-	omega := pts.Coeffs[0][:ncols]
-	S0 := uint64(len(omega))
-	S0inv := modInv(S0, q)
-
-	// Fill all new columns (coeff writes then NTT)
-	if err := ProverFillIntegerL2(ringQ, w1, mSig, spec, cols, glob, slack, S0, S0inv); err != nil {
+	// Fill all new columns via interpolation over Ω
+	Sqs, err := ProverFillIntegerL2(ringQ, w1, mSig, spec, cols, glob, slack, omega, ell, S0, S0inv)
+	if err != nil {
 		panic(err)
 	}
 	if tamperBit && len(w1) > 0 {
@@ -177,7 +188,7 @@ func RunPACSSimulation() bool {
 	Fpar := append(append(append(FparCore, FparDec...), FparCarr...), FparSlackB...)
 
 	FaggBBS := buildFagg(ringQ, w1[:origW1Len], w2, A, b1, B0c, B0m, B0r)
-	FaggInt := buildFaggIntegerSumDelta(ringQ, spec, S0, S0inv, cols, glob, slack)
+	FaggInt := buildFaggIntegerSumDelta(ringQ, spec, S0, S0inv, cols, glob, slack, omega)
 	Fagg := append(FaggBBS, FaggInt...)
 
 	totalParallel := len(Fpar)
@@ -234,7 +245,7 @@ func RunPACSSimulation() bool {
 func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly, ell int, omega []uint64) [][]uint64 {
 	defer prof.Track(time.Now(), "columnsToRows")
 	s := len(w1)
-	ncols := r.N - ell
+	ncols := len(omega)
 	rows := make([][]uint64, s+2)
 	q := r.Modulus[0]
 
@@ -298,12 +309,6 @@ func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
 }
 
 // ------- small utilities  ---------------------------------------
-func evalAt(r *ring.Ring, p *ring.Poly, x uint64) uint64 {
-	coeff := r.NewPoly()
-	r.InvNTT(p, coeff)
-	return EvalPoly(coeff.Coeffs[0], x, r.Modulus[0])
-}
-
 func firstColumn(mat [][]uint64) [][]uint64 {
 	out := make([][]uint64, len(mat))
 	for i := range mat {

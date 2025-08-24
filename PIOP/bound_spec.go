@@ -9,14 +9,21 @@ type BoundSpec struct {
 	W     int      // bits per limb
 	LS    int      // number of limbs for beta^2 in base R
 	Beta2 []uint64 // beta^2 limbs (little-endian) in base R
+	Ell   int      // blinding points per row
 }
 
 // NewBoundSpec returns the radix decomposition of beta^2 in base R=2^w.
-// R must satisfy R < q.
-func NewBoundSpec(q, beta uint64, w int) BoundSpec {
+// R must satisfy R < q and beta^2 < q.
+func NewBoundSpec(q, beta uint64, w, ell int) BoundSpec {
 	R := uint64(1) << uint(w)
+	if R >= q {
+		panic("R >= q")
+	}
 	bb := new(big.Int).SetUint64(beta)
 	bb.Mul(bb, bb) // beta^2
+	if bb.Cmp(new(big.Int).SetUint64(q)) >= 0 {
+		panic("beta^2 >= q")
+	}
 
 	BR := new(big.Int).SetUint64(R)
 	zero := new(big.Int)
@@ -30,5 +37,5 @@ func NewBoundSpec(q, beta uint64, w int) BoundSpec {
 	if len(limbs) == 0 {
 		limbs = []uint64{0}
 	}
-	return BoundSpec{Q: q, R: R, W: w, LS: len(limbs), Beta2: limbs}
+	return BoundSpec{Q: q, R: R, W: w, LS: len(limbs), Beta2: limbs, Ell: ell}
 }

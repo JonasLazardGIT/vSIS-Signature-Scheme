@@ -269,6 +269,21 @@ func sumPolyList(r *ring.Ring, polys []*ring.Poly, omega []uint64) []uint64 {
 	return out
 }
 
+// checkOmega ensures Ω has distinct elements and q ∤ |Ω|.
+func checkOmega(omega []uint64, q uint64) error {
+	seen := make(map[uint64]struct{}, len(omega))
+	for _, w := range omega {
+		if _, ok := seen[w]; ok {
+			return fmt.Errorf("omega has duplicate element %d", w)
+		}
+		seen[w] = struct{}{}
+	}
+	if uint64(len(omega))%q == 0 {
+		return fmt.Errorf("q divides |Ω|; no modular inverse for S0")
+	}
+	return nil
+}
+
 // lagrangeBasisNumerator returns Π_{j≠i} (X - x_j) as a coefficient slice.
 func lagrangeBasisNumerator(xs []uint64, i int, q uint64) []uint64 {
 	num := []uint64{1}
@@ -305,6 +320,38 @@ func Interpolate(xs, ys []uint64, q uint64) []uint64 {
 		res = res[:len(res)-1]
 	}
 	return res
+}
+
+// makeConstRow returns a degree-0 polynomial equal to val everywhere.
+func makeConstRow(r *ring.Ring, val uint64) *ring.Poly {
+	p := r.NewPoly()
+	for i := range p.Coeffs[0] {
+		p.Coeffs[0][i] = val % r.Modulus[0]
+	}
+	r.NTT(p, p)
+	return p
+}
+
+// buildValueRow interpolates a polynomial with prescribed values on Ω.
+func buildValueRow(r *ring.Ring, vals, omega []uint64, ell int) *ring.Poly {
+	p, _, _, err := BuildRowPolynomial(r, vals, omega, ell)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
+// scalePolyNTT multiplies polynomial a by scalar c (mod q) and writes to out.
+// out may alias a.
+func scalePolyNTT(r *ring.Ring, a *ring.Poly, c uint64, out *ring.Poly) {
+	if out != a {
+		copy(out.Coeffs[0], a.Coeffs[0])
+	}
+	q := r.Modulus[0]
+	c %= q
+	for i := range out.Coeffs[0] {
+		out.Coeffs[0][i] = modMul(out.Coeffs[0][i], c, q)
+	}
 }
 
 // -----------------------------------------------------------------------------
