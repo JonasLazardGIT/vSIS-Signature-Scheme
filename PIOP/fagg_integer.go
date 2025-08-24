@@ -62,7 +62,7 @@ func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, cols De
 	scratch := r.NewPoly()
 	for l := 0; l < LS; l++ {
 		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
-		constD := makeConstRow(r, modMul(sumOmegaD, S0inv, q))
+		constD := makeConstRow(r, modMul(sumOmegaD%q, S0inv%q, q))
 
 		p := r.NewPoly()
 		r.Add(p, constD, p)
@@ -109,7 +109,7 @@ func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, co
 	scratch := r.NewPoly()
 	for l := 0; l < LS; l++ {
 		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
-		constD := makeConstRow(r, modMul(sumOmegaD, S0inv, q))
+		constD := makeConstRow(r, modMul(sumOmegaD%q, S0inv%q, q))
 
 		p := r.NewPoly()
 		r.Add(p, constD, p)

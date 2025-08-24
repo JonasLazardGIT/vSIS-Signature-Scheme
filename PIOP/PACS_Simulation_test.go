@@ -88,7 +88,8 @@ func RunPACSSimulation() bool {
 	ringQ.NTT(px, pts)
 	omega := pts.Coeffs[0][:ncols]
 	if err := checkOmega(omega, q); err != nil {
-		panic(err)
+		fmt.Println("[Ω-check] ", err)
+		return false
 	}
 	S0 := uint64(len(omega))
 	S0inv := modInv(S0, q)
@@ -190,6 +191,19 @@ func RunPACSSimulation() bool {
 	if err != nil {
 		panic(err)
 	}
+	// Bind Sqs in the same commitment as T,D,Bit: needed for T0 - Sqs = 0.
+	w1 = append(w1, Sqs)
+
+	// (tight carry width): U_C = ceil(log2 |Ω|) + 1
+	{
+		s := len(omega)
+		Wc = 1
+		for (1 << uint(Wc-1)) < s {
+			Wc++
+		}
+	}
+
+	// NEGATIVE TEST: tamper BEFORE commit so commit binds the modified row.
 	if tamperBit && len(w1) > 0 {
 		c := ringQ.NewPoly()
 		ringQ.InvNTT(w1[0], c)
