@@ -354,6 +354,15 @@ func scalePolyNTT(r *ring.Ring, a *ring.Poly, c uint64, out *ring.Poly) {
 	}
 }
 
+// makeProductConstraint returns Ψ(X)=W3(X)-W1(X)·W2(X).
+func makeProductConstraint(r *ring.Ring, W1, W2, W3 *ring.Poly) *ring.Poly {
+	tmp := r.NewPoly()
+	r.MulCoeffs(W1, W2, tmp)
+	p := W3.CopyNew()
+	r.Sub(p, tmp, p)
+	return p
+}
+
 // -----------------------------------------------------------------------------
 //  Public helper – build P_i(X) with random blinding
 // -----------------------------------------------------------------------------

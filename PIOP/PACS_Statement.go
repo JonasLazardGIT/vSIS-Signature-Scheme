@@ -477,12 +477,8 @@ func makeSigPolys(r *ring.Ring, rows [][]uint64) []*ring.Poly {
 func buildFpar(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) []*ring.Poly {
 	defer prof.Track(time.Now(), "buildFpar")
 	out := make([]*ring.Poly, len(w1))
-	tmp := r.NewPoly()
 	for k := range w1 {
-		p := w3[k].CopyNew()
-		r.MulCoeffs(w1[k], w2, tmp)
-		r.Sub(p, tmp, p)
-		out[k] = p
+		out[k] = makeProductConstraint(r, w1[k], w2, w3[k])
 	}
 	return out
 }

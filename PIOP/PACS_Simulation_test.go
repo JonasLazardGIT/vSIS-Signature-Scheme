@@ -190,6 +190,7 @@ func RunPACSSimulation() bool {
 	if err != nil {
 		panic(err)
 	}
+	w1 = append(w1, Sqs)
 	if tamperBit && len(w1) > 0 {
 		c := ringQ.NewPoly()
 		ringQ.InvNTT(w1[0], c)
