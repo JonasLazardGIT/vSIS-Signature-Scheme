@@ -4,8 +4,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
 	prof "vSIS-Signature/prof"
+
+	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
 // GlobSlack holds global slack digits and their bit decomposition.
@@ -63,33 +64,34 @@ func ProverFillIntegerL2(
 	halfq := new(big.Int).Rsh(bq, 1)
 	Rbig := new(big.Int).SetUint64(R)
 
-       sqsVals := make([]uint64, s)
-       for j := 0; j < s; j++ {
-               wj := omega[j] % q
-               sum := new(big.Int)
-               for k := 0; k < mSig; k++ {
-                       // Evaluate P_k at ω_j and accumulate squares
-                       av := EvalPoly(coeffW1[k].Coeffs[0], wj, q)
-                       a := new(big.Int).SetUint64(av)
-                       if a.Cmp(halfq) > 0 {
-                               a.Sub(a, bq)
-                       }
-                       a.Mul(a, a)
-                       sum.Add(sum, a)
-               }
-               SRow[j] = sum
-               sqsVals[j] = modU64(sum, q)
-               tmp := new(big.Int).Set(sum)
-               for l := 0; l < LS; l++ {
-                       if tmp.Sign() == 0 {
-                               Drows[l][j] = 0
-                               continue
-                       }
-                       rem := new(big.Int)
-                       tmp.DivMod(tmp, Rbig, rem)
-                       Drows[l][j] = rem.Uint64()
-               }
-       }
+	sqsVals := make([]uint64, s)
+	for j := 0; j < s; j++ {
+		wj := omega[j] % q
+		sum := new(big.Int)
+		var acc uint64
+		for k := 0; k < mSig; k++ {
+			av := EvalPoly(coeffW1[k].Coeffs[0], wj, q)
+			acc = (acc + (av*av)%q) % q // field accumulator for Sqs
+			a := new(big.Int).SetUint64(av)
+			if a.Cmp(halfq) > 0 {
+				a.Sub(a, bq)
+			}
+			a.Mul(a, a)
+			sum.Add(sum, a) // big-int path for remainder chain
+		}
+		SRow[j] = sum
+		sqsVals[j] = acc
+		tmp := new(big.Int).Set(sum)
+		for l := 0; l < LS; l++ {
+			if tmp.Sign() == 0 {
+				Drows[l][j] = 0
+				continue
+			}
+			rem := new(big.Int)
+			tmp.DivMod(tmp, Rbig, rem)
+			Drows[l][j] = rem.Uint64()
+		}
+	}
 
 	Sqs := buildValueRow(r, sqsVals, omega, ell)
 
