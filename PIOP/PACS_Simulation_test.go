@@ -45,14 +45,6 @@ type transcript struct {
 }
 
 // --------------------------------------------------------------------------
-// Global variables for bit-decomposition checks
-// --------------------------------------------------------------------------
-
-var (
-	tamperBit bool
-)
-
-// --------------------------------------------------------------------------
 // go test entry‑point
 // --------------------------------------------------------------------------
 func TestPACSSimulation(t *testing.T) {
@@ -203,15 +195,6 @@ func RunPACSSimulation() bool {
 		}
 	}
 
-	// NEGATIVE TEST: tamper BEFORE commit so commit binds the modified row.
-	if tamperBit && len(w1) > 0 {
-		c := ringQ.NewPoly()
-		ringQ.InvNTT(w1[0], c)
-		c.Coeffs[0][0] ^= 1
-		ringQ.NTT(c, c)
-		w1[0] = c
-	}
-
 	// ---------------------------------------------------------- LVCS.Commit
 	rows := columnsToRows(ringQ, w1, w2, w3, ell, omega)
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
@@ -237,9 +220,13 @@ func RunPACSSimulation() bool {
 
 	FparCore := buildFpar(ringQ, w1[:origW1Len], w2, w3)
 	FparDec := buildFparIntegerDecomp(ringQ, Sqs, spec, cols)
+	FparCouple := BuildFparSqsCoupling(ringQ, Sqs, w1[:mSig])
 	FparCarr := buildFparGlobCarryBits(ringQ, S0inv, Wc, glob)
 	FparSlackB := buildFparGlobSlackBits(ringQ, S0inv, spec.W, slack)
-	Fpar := append(append(append(FparCore, FparDec...), FparCarr...), FparSlackB...)
+	Fpar := append(FparCore, FparDec...)
+	Fpar = append(Fpar, FparCouple...)
+	Fpar = append(Fpar, FparCarr...)
+	Fpar = append(Fpar, FparSlackB...)
 
 	theta := BuildThetaPrimeSet(ringQ, A, b1, B0c, B0m, B0r, omega)
 	FaggBBS := buildFaggOnOmega(ringQ, w1[:origW1Len], w2, theta, mSig)

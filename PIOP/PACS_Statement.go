@@ -251,8 +251,11 @@ func VerifyQ(
 		}
 		seen[wm] = struct{}{}
 	}
-	if q%uint64(len(omega)) == 0 {
-		log.Fatalf("VerifyQ: q (= %d) is multiple of |Ω| (= %d)", q, len(omega))
+	if len(omega) == 0 {
+		log.Fatalf("VerifyQ: |Ω| must be > 0")
+	}
+	if uint64(len(omega)) >= q {
+		log.Fatalf("VerifyQ: |Ω| (= %d) must be < q (= %d) for S0 invertibility", len(omega), q)
 	}
 
 	for i, Qi := range Q {

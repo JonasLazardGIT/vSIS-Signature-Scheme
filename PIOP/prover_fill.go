@@ -9,6 +9,10 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
 
+// TamperBit, when set by tests, flips a digit-bit row by +1 (as a constant),
+// which should break both bitness and digit-formation constraints.
+var TamperBit bool
+
 // GlobSlack holds global slack digits and their bit decomposition.
 type GlobSlack struct {
 	D     []*ring.Poly   // Δℓ const polys (Δℓ*S0inv)
@@ -104,6 +108,11 @@ func ProverFillIntegerL2(
 			}
 			cols.Bit[l][u] = buildValueRow(r, Bu, omega, ell)
 		}
+	}
+
+	if TamperBit {
+		one := makeConstRow(r, 1%q)
+		r.Add(cols.Bit[0][0], one, cols.Bit[0][0])
 	}
 
 	Trows := make([][]uint64, LS+1)

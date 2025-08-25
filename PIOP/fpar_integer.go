@@ -90,3 +90,26 @@ func bitnessPoly(r *ring.Ring, b *ring.Poly) *ring.Poly {
 	r.NTT(coeff, coeff)
 	return coeff
 }
+
+// BuildFparSqsCoupling emits a single degree-2 parallel constraint enforcing
+// Sqs - sum_t P_t^2 = 0. Squaring is done in the coefficient domain and then
+// mapped back to NTT form.
+func BuildFparSqsCoupling(r *ring.Ring, Sqs *ring.Poly, sigRows []*ring.Poly) (Fpar []*ring.Poly) {
+	defer prof.Track(time.Now(), "BuildFparSqsCoupling")
+	q := r.Modulus[0]
+	sum := r.NewPoly()
+	sq := r.NewPoly()
+	for _, pt := range sigRows {
+		r.InvNTT(pt, sq)
+		for i := 0; i < r.N; i++ {
+			v := sq.Coeffs[0][i] % q
+			sq.Coeffs[0][i] = (v * v) % q
+		}
+		r.NTT(sq, sq)
+		r.Add(sum, sq, sum)
+	}
+	p := r.NewPoly()
+	r.Sub(Sqs, sum, p)
+	Fpar = append(Fpar, p)
+	return
+}

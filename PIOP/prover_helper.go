@@ -278,8 +278,11 @@ func checkOmega(omega []uint64, q uint64) error {
 		}
 		seen[w] = struct{}{}
 	}
-	if uint64(len(omega))%q == 0 {
-		return fmt.Errorf("q divides |Ω|; no modular inverse for S0")
+	if len(omega) == 0 {
+		return fmt.Errorf("|Ω| must be > 0")
+	}
+	if uint64(len(omega)) >= q {
+		return fmt.Errorf("|Ω| (= %d) must be < q (= %d) so S0 is invertible", len(omega), q)
 	}
 	return nil
 }
@@ -460,8 +463,8 @@ func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPr
 		}
 		seen[wm] = struct{}{}
 	}
-	if q%s == 0 {
-		panic(fmt.Sprintf("BuildMaskPolynomials: q (= %d) is multiple of |Ω| (= %d) – constraint not solvable", q, s))
+	if s >= q {
+		panic(fmt.Sprintf("BuildMaskPolynomials: |Ω| (= %d) must be < q (= %d) – constraint not solvable", s, q))
 	}
 
 	// -- pre-compute S_k = Σ ω^k  for  k=0…dQ modulo q -----------------------
