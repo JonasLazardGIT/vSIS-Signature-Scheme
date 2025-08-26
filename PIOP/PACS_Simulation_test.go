@@ -199,7 +199,7 @@ func RunPACSSimulation() bool {
 	rows := columnsToRows(ringQ, w1, w2, w3, ell, omega)
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
 
-	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta)
+	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta, ncols)
 	Gamma := vrf.CommitStep1(root)
 	Rpolys := lvcs.CommitFinish(pk, Gamma)
 	if !vrf.CommitStep2(Rpolys) {
@@ -254,7 +254,7 @@ func RunPACSSimulation() bool {
 	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
 
 	// --------------------------------------------------------- verifier picks E
-	E := []int{1} // open the first point of Ω (simpler during debugging)
+	E := vrf.ChooseE(ell, ncols)
 
 	// --------------------------------------------------------- opening & check
 	open := lvcs.EvalFinish(pk, E)

@@ -13,6 +13,7 @@ import (
 type VerifierState struct {
 	RingQ  *ring.Ring
 	r, eta int
+	ncols  int
 
 	Root  [32]byte
 	Gamma [][]uint64
@@ -20,8 +21,8 @@ type VerifierState struct {
 }
 
 // NewVerifier constructs the LVCS verifier.
-func NewVerifier(ringQ *ring.Ring, r, eta int) *VerifierState {
-	return &VerifierState{RingQ: ringQ, r: r, eta: eta}
+func NewVerifier(ringQ *ring.Ring, r, eta, ncols int) *VerifierState {
+	return &VerifierState{RingQ: ringQ, r: r, eta: eta, ncols: ncols}
 }
 
 // CommitStep1 – §4.1 steps 1–3:
@@ -56,14 +57,23 @@ func deg(p *ring.Poly) int {
 	return 0
 }
 
-// ChooseE – §4.1 step 3:
-// Later, open masked linear combinations on a small random subset EE of size ℓ.
-func (v *VerifierState) ChooseE(ell int) []int {
+// ChooseE – choose ℓ distinct indices on the MASKED TAIL [ncols, ncols+ℓ).
+// Pass ncols := N - ℓ so E ⊆ Ω′ (the blinded coordinates), per §4.1.
+func (v *VerifierState) ChooseE(ell, ncols int) []int {
 	N := v.RingQ.N
-	E := make([]int, ell)
+	if ell <= 0 || ncols < 0 || ncols+ell > N {
+		return nil
+	}
+	E := make([]int, 0, ell)
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := range E {
-		E[i] = rnd.Intn(N)
+	used := make(map[int]struct{}, ell)
+	for len(E) < ell {
+		idx := ncols + rnd.Intn(ell)
+		if _, ok := used[idx]; ok {
+			continue
+		}
+		used[idx] = struct{}{}
+		E = append(E, idx)
 	}
 	return E
 }
@@ -83,18 +93,34 @@ func (v *VerifierState) EvalStep2(
 	open *decs.DECSOpening,
 	C [][]uint64, // coefficient matrix
 ) bool {
-	// 1) Merkle + mask‐relation check
+	// enforce tail-only and exact cardinality
+	ncols := v.ncols
+	if len(E) != len(bar[0]) {
+		return false
+	}
+	ell := len(bar[0])
+	for _, idx := range E {
+		if idx < ncols || idx >= ncols+ell {
+			return false
+		}
+	}
+
+	// 0) Bind the openings to the challenge set E (set equality)
+	if !equalSets(open.Indices, E) {
+		return false
+	}
+
+	// 1) Merkle + masked-relation check (now bound to E)
 	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
-	if !decv.VerifyEval(v.Root, v.Gamma, v.R, open) {
+	if !decv.VerifyEvalAt(v.Root, v.Gamma, v.R, open, E) {
 		return false
 	}
 
 	// 2) check only the masked positions
 	mod := v.RingQ.Modulus[0]
-	ncols := v.RingQ.N - len(bar[0])
 	for t, idx := range open.Indices {
-		if idx < ncols {
-			continue
+		if idx < ncols || idx >= ncols+ell {
+			return false
 		}
 		maskedPos := idx - ncols
 		for k := range bar {
@@ -106,6 +132,24 @@ func (v *VerifierState) EvalStep2(
 				return false
 			}
 		}
+	}
+	return true
+}
+
+// equalSets checks multisets equality of int slices.
+func equalSets(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[int]int, len(a))
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, y := range b {
+		if seen[y] == 0 {
+			return false
+		}
+		seen[y]--
 	}
 	return true
 }

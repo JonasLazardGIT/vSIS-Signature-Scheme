@@ -139,19 +139,27 @@ func (pr *Prover) EvalOpen(E []int) *DECSOpening {
 	return open
 }
 
-// deriveGamma expands root→η×r challenge matrix via SHA256+counter
-func DeriveGamma(root [32]byte, eta, r int) [][]uint64 {
+// DeriveGamma expands root→η×r matrix Γ with entries uniform in [0,q).
+// Uses SHA256(root || ctr) as a PRF and 64-bit rejection sampling for exact uniformity.
+func DeriveGamma(root [32]byte, eta, r int, q uint64) [][]uint64 {
 	out := make([][]uint64, eta)
-	var ctr uint32
-	buf := make([]byte, 36)
-	copy(buf[:32], root[:])
+	var ctr uint64
 	for k := 0; k < eta; k++ {
 		out[k] = make([]uint64, r)
 		for j := 0; j < r; j++ {
-			binary.LittleEndian.PutUint32(buf[32:], ctr)
-			h := sha256.Sum256(buf)
-			out[k][j] = uint64(binary.LittleEndian.Uint32(h[:4]))
-			ctr++
+			for {
+				var buf [40]byte
+				copy(buf[:32], root[:])
+				binary.LittleEndian.PutUint64(buf[32:], ctr)
+				h := sha256.Sum256(buf[:])
+				x := binary.LittleEndian.Uint64(h[:8])
+				ctr++
+				limit := (^uint64(0) / q) * q
+				if x < limit {
+					out[k][j] = x % q
+					break
+				}
+			}
 		}
 	}
 	return out

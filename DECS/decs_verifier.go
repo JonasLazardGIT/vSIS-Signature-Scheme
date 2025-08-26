@@ -19,7 +19,8 @@ func NewVerifier(ringQ *ring.Ring, r, eta int) *Verifier {
 
 // DeriveGamma runs step 2 (commit → Γ).
 func (v *Verifier) DeriveGamma(root [32]byte) [][]uint64 {
-	return DeriveGamma(root, v.eta, v.r)
+	q := v.ringQ.Modulus[0]
+	return DeriveGamma(root, v.eta, v.r, q)
 }
 
 // VerifyCommit checks deg R_k <= Degree (DECS §3 Step 3).
@@ -82,4 +83,26 @@ func (v *Verifier) VerifyEval(
 		}
 	}
 	return true
+}
+
+// VerifyEvalAt enforces that the prover opened exactly the challenged set E,
+// then runs the standard DECS checks.
+func (v *Verifier) VerifyEvalAt(
+	root [32]byte, Gamma [][]uint64, R []*ring.Poly,
+	open *DECSOpening, E []int,
+) bool {
+	if len(open.Indices) != len(E) {
+		return false
+	}
+	seen := make(map[int]int, len(E))
+	for _, x := range E {
+		seen[x]++
+	}
+	for _, y := range open.Indices {
+		if seen[y] == 0 {
+			return false
+		}
+		seen[y]--
+	}
+	return v.VerifyEval(root, Gamma, R, open)
 }

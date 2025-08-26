@@ -3,9 +3,6 @@
 package pcs
 
 import (
-	"math/rand"
-	"time"
-
 	lvcs "vSIS-Signature/LVCS"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -31,6 +28,7 @@ func NewVerifierPolynomial(
 ) *VerifierState {
 	npcs := len(Dj)
 	Nu := make([]int, npcs)
+	sumNu := 0
 	for j := 0; j < npcs; j++ {
 		d := Dj[j] + 1 - EllPrime
 		if d <= 0 {
@@ -38,10 +36,11 @@ func NewVerifierPolynomial(
 		} else {
 			Nu[j] = (d + Mu - 1) / Mu
 		}
+		sumNu += Nu[j]
 	}
 	nrows := Mu + EllPrime
-	// Initialize the LVCS verifier with the same row‐count and DECS η
-	lvcsVer := lvcs.NewVerifier(ringQ, nrows, Eta)
+	// Initialize the LVCS verifier with the same row‐count, DECS η, and ncols
+	lvcsVer := lvcs.NewVerifier(ringQ, nrows, Eta, sumNu)
 	return &VerifierState{
 		RingQ:    ringQ,
 		LvcsVer:  lvcsVer,
@@ -63,10 +62,13 @@ func (vs *VerifierState) CommitStep2Polynomial(Rpolys []*ring.Poly) {
 	vs.LvcsVer.CommitStep2(Rpolys)
 }
 
-// ChooseEPolynomial picks a random ℓ′‐subset of [0..N-1] for opening.
+// ChooseEPolynomial picks a random ℓ′-subset on the masked tail for opening.
 func (vs *VerifierState) ChooseEPolynomial() []int {
-	rand.Seed(time.Now().UnixNano())
-	return vs.LvcsVer.ChooseE(vs.EllPrime)
+	sumNu := 0
+	for _, nu := range vs.Nu {
+		sumNu += nu
+	}
+	return vs.LvcsVer.ChooseE(vs.EllPrime, sumNu)
 }
 
 // EvalStep2Polynomial completes the PCS open protocol:

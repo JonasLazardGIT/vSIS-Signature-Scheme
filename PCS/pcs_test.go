@@ -82,7 +82,6 @@ func TestPCSEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvalFinishPolynomial error: %v", err)
 	}
-
 	// 11) Verifier checks Merkle, degree, and final polynomial relation
 	if ok := vk.EvalStep2Polynomial(bar, E, open, C); !ok {
 		t.Fatalf("EvalStep2Polynomial failed")

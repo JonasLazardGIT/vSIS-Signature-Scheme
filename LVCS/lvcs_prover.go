@@ -65,7 +65,7 @@ func CommitInit(
 	if root, err = dprover.CommitInit(); err != nil {
 		return
 	}
-	Gamma := decs.DeriveGamma(root, decs.Eta, nrows)
+	Gamma := decs.DeriveGamma(root, decs.Eta, nrows, q0)
 
 	// lift P_j to NTT for later reuse
 	rowsNTT := make([]*ring.Poly, nrows)
