@@ -41,7 +41,7 @@ func TestLVCS_CommitAndEval_Accepts(t *testing.T) {
 		t.Fatalf("CommitInit: %v", err)
 	}
 
-	ver := NewVerifierWithParams(ringQ, nrows, params)
+	ver := NewVerifierWithParams(ringQ, nrows, params, ncols)
 	ver.CommitStep1(root)
 
 	R := CommitFinish(proverKey, ver.Gamma)
@@ -88,7 +88,7 @@ func TestLVCS_Rejects_MismatchedE_AndHeadIndex(t *testing.T) {
 		}
 	}
 	root, proverKey, _ := CommitInitWithParams(ringQ, rows, ell, params)
-	ver := NewVerifierWithParams(ringQ, nrows, params)
+	ver := NewVerifierWithParams(ringQ, nrows, params, ncols)
 	ver.CommitStep1(root)
 	R := CommitFinish(proverKey, ver.Gamma)
 	ver.CommitStep2(R)

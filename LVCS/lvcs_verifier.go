@@ -18,26 +18,27 @@ type VerifierState struct {
 	RingQ  *ring.Ring
 	r      int
 	params decs.Params
+	ncols  int // tail start boundary, supplied by caller
 
 	Root  [32]byte
 	Gamma [][]uint64
 	R     []*ring.Poly
 }
 
-// NewVerifierWithParams constructs the LVCS verifier with explicit DECS params.
-func NewVerifierWithParams(ringQ *ring.Ring, r int, params decs.Params) *VerifierState {
-	return &VerifierState{RingQ: ringQ, r: r, params: params}
+// NewVerifierWithParams constructs the LVCS verifier with explicit DECS params
+// and stores the caller-provided tail boundary ncols.
+func NewVerifierWithParams(ringQ *ring.Ring, r int, params decs.Params, ncols int) *VerifierState {
+	return &VerifierState{RingQ: ringQ, r: r, params: params, ncols: ncols}
 }
 
-// NewVerifier is a backwards-compatible helper taking η and ncols. ncols is
-// ignored (EvalStep2 derives it from bar), but kept for API compatibility.
+// NewVerifier is a backwards-compatible helper taking η and ncols.
 func NewVerifier(ringQ *ring.Ring, r, eta, ncols int) *VerifierState {
 	params := decs.DefaultParams
 	params.Eta = eta
 	if params.Degree >= int(ringQ.N) {
 		params.Degree = int(ringQ.N) - 1
 	}
-	return NewVerifierWithParams(ringQ, r, params)
+	return NewVerifierWithParams(ringQ, r, params, ncols)
 }
 
 // CommitStep1 – §4.1 steps 1–3:
@@ -116,7 +117,7 @@ func (v *VerifierState) EvalStep2(
 		return false
 	}
 	ell := len(bar[0])
-	ncols := int(v.RingQ.N) - ell
+	ncols := v.ncols
 	if len(E) != ell {
 		if debugLVCS {
 			fmt.Printf("[LVCS] FAIL: |E|=%d != ell=%d\n", len(E), ell)

@@ -508,6 +508,16 @@ func buildSimWith(t *testing.T, o SimOpts) (*simCtx, bool, bool, bool) {
 		E = vrf.ChooseE(ell, ncols)
 	}
 
+	for _, idx := range E {
+		if idx < ncols || idx >= ncols+ell {
+			if t != nil {
+				t.Fatalf("bad E: idx=%d not in tail [ncols=%d, ncols+ell=%d)", idx, ncols, ncols+ell)
+			} else {
+				panic(fmt.Sprintf("bad E: idx=%d not in tail [ncols=%d, ncols+ell=%d)", idx, ncols, ncols+ell))
+			}
+		}
+	}
+
 	// --------------------------------------------------------- opening & check
 	open := lvcs.EvalFinish(pk, E)
 
