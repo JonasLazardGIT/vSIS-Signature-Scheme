@@ -2,9 +2,13 @@ package decs
 
 import (
 	"encoding/binary"
+	"fmt"
+	"os"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
+
+var debugDECS = os.Getenv("DEBUG_DECS") != ""
 
 // Verifier holds DECS verification parameters.
 type Verifier struct {
@@ -83,6 +87,9 @@ func (v *Verifier) VerifyEval(
 		copy(buf[off:], open.Nonces[t])
 
 		if !VerifyPath(buf, open.Paths[t], root, idx) {
+			if debugDECS {
+				fmt.Printf("[DECS] FAIL Merkle at t=%d idx=%d (path mismatch)\n", t, idx)
+			}
 			return false
 		}
 
@@ -94,6 +101,12 @@ func (v *Verifier) VerifyEval(
 				rhs = (rhs + mul) % mod
 			}
 			if lhs != rhs {
+				if debugDECS {
+					fmt.Printf("[DECS] FAIL masked-relation at t=%d idx=%d k=%d\n", t, idx, k)
+					fmt.Printf("       lhs=NTT(R[%d])[idx]=%d, rhs=Mvals+ΣΓ·P=%d\n", k, lhs, rhs)
+					fmt.Printf("       Pvals[t]=%v\n", open.Pvals[t])
+					fmt.Printf("       Gamma[k]=%v\n", Gamma[k])
+				}
 				return false
 			}
 		}
@@ -108,6 +121,9 @@ func (v *Verifier) VerifyEvalAt(
 	open *DECSOpening, E []int,
 ) bool {
 	if len(open.Indices) != len(E) {
+		if debugDECS {
+			fmt.Printf("[DECS] FAIL set-size: |open.Indices|=%d != |E|=%d\n", len(open.Indices), len(E))
+		}
 		return false
 	}
 	seen := make(map[int]int, len(E))
@@ -116,6 +132,9 @@ func (v *Verifier) VerifyEvalAt(
 	}
 	for _, y := range open.Indices {
 		if seen[y] == 0 {
+			if debugDECS {
+				fmt.Printf("[DECS] FAIL set-bind: extra index %d in opening\n", y)
+			}
 			return false
 		}
 		seen[y]--

@@ -1,13 +1,17 @@
 package lvcs
 
 import (
+	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	decs "vSIS-Signature/DECS"
 
 	"github.com/tuneinsight/lattigo/v4/ring"
 )
+
+var debugLVCS = os.Getenv("DEBUG_LVCS") != ""
 
 // VerifierState holds verifier‐side LVCS state.
 type VerifierState struct {
@@ -105,28 +109,43 @@ func (v *VerifierState) EvalStep2(
 	C [][]uint64, // coefficient matrix
 ) bool {
 	// enforce tail-only and exact cardinality
-	if len(bar) == 0 {
+	if len(bar) == 0 || len(bar[0]) == 0 {
+		if debugLVCS {
+			fmt.Println("[LVCS] FAIL: empty bar")
+		}
 		return false
 	}
 	ell := len(bar[0])
 	ncols := int(v.RingQ.N) - ell
 	if len(E) != ell {
+		if debugLVCS {
+			fmt.Printf("[LVCS] FAIL: |E|=%d != ell=%d\n", len(E), ell)
+		}
 		return false
 	}
 	for _, idx := range E {
 		if idx < ncols || idx >= ncols+ell {
+			if debugLVCS {
+				fmt.Printf("[LVCS] FAIL: E contains head index %d (ncols=%d ell=%d)\n", idx, ncols, ell)
+			}
 			return false
 		}
 	}
 
 	// 0) Bind the openings to the challenge set E (set equality)
 	if !equalSets(open.Indices, E) {
+		if debugLVCS {
+			fmt.Println("[LVCS] FAIL: open.Indices != E")
+		}
 		return false
 	}
 
 	// 1) Merkle + masked-relation check (now bound to E)
 	decv := decs.NewVerifierWithParams(v.RingQ, v.r, v.params)
 	if !decv.VerifyEvalAt(v.Root, v.Gamma, v.R, open, E) {
+		if debugLVCS {
+			fmt.Println("[LVCS] FAIL: DECS.VerifyEvalAt")
+		}
 		return false
 	}
 
@@ -140,6 +159,11 @@ func (v *VerifierState) EvalStep2(
 				acc = (acc + C[k][j]*open.Pvals[t][j]) % mod
 			}
 			if acc != bar[k][maskedPos] {
+				if debugLVCS {
+					fmt.Printf("[LVCS] FAIL linear at t=%d idx=%d (pos=%d) k=%d: acc=%d bar=%d\n", t, idx, maskedPos, k, acc, bar[k][maskedPos])
+					fmt.Printf("       C[k]=%v\n", C[k])
+					fmt.Printf("       Pvals[t]=%v\n", open.Pvals[t])
+				}
 				return false
 			}
 		}
