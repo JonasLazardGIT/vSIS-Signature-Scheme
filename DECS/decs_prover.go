@@ -20,11 +20,26 @@ type Prover struct {
 	Mvals  []*ring.Poly // NTT(M)
 	root   [32]byte
 	R      []*ring.Poly // η output polys in coeff form
+	params Params
 }
 
-// NewProver returns a new DECS prover for polynomials P.
+// NewProverWithParams returns a new DECS prover for polynomials P and the
+// provided protocol parameters. It panics if params.Degree is not in [0, N).
+func NewProverWithParams(ringQ *ring.Ring, P []*ring.Poly, params Params) *Prover {
+	if params.Degree < 0 || params.Degree >= int(ringQ.N) {
+		panic("decs: invalid degree parameter")
+	}
+	return &Prover{ringQ: ringQ, P: P, params: params}
+}
+
+// NewProver returns a new DECS prover with DefaultParams. It is provided for
+// backwards compatibility.
 func NewProver(ringQ *ring.Ring, P []*ring.Poly) *Prover {
-	return &Prover{ringQ: ringQ, P: P}
+	params := DefaultParams
+	if params.Degree >= int(ringQ.N) {
+		params.Degree = int(ringQ.N) - 1
+	}
+	return NewProverWithParams(ringQ, P, params)
 }
 
 // CommitInit does DECS.Commit step 1: sample M, nonces; build Merkle tree; NTT(P,M).
@@ -40,11 +55,11 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 	us := ring.NewUniformSampler(prng, pr.ringQ)
 
 	// 1a) sample η mask polys
-	pr.M = make([]*ring.Poly, Eta)
-	for k := 0; k < Eta; k++ {
+	pr.M = make([]*ring.Poly, pr.params.Eta)
+	for k := 0; k < pr.params.Eta; k++ {
 		pr.M[k] = pr.ringQ.NewPoly()
 		us.Read(pr.M[k])
-		for i := Degree + 1; i < N; i++ {
+		for i := pr.params.Degree + 1; i < N; i++ {
 			pr.M[k].Coeffs[0][i] = 0
 		}
 	}
@@ -55,8 +70,8 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 		pr.Pvals[j] = pr.ringQ.NewPoly()
 		pr.ringQ.NTT(pr.P[j], pr.Pvals[j])
 	}
-	pr.Mvals = make([]*ring.Poly, Eta)
-	for k := 0; k < Eta; k++ {
+	pr.Mvals = make([]*ring.Poly, pr.params.Eta)
+	for k := 0; k < pr.params.Eta; k++ {
 		pr.Mvals[k] = pr.ringQ.NewPoly()
 		pr.ringQ.NTT(pr.M[k], pr.Mvals[k])
 	}
@@ -65,19 +80,19 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 	leaves := make([][]byte, N)
 	pr.nonces = make([][]byte, N)
 	for i := 0; i < N; i++ {
-		buf := make([]byte, 4*(r+Eta)+4+NonceBytes)
+		buf := make([]byte, 4*(r+pr.params.Eta)+4+pr.params.NonceBytes)
 		off := 0
 		for j := 0; j < r; j++ {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(pr.Pvals[j].Coeffs[0][i]))
 			off += 4
 		}
-		for k := 0; k < Eta; k++ {
+		for k := 0; k < pr.params.Eta; k++ {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(pr.Mvals[k].Coeffs[0][i]))
 			off += 4
 		}
 		binary.LittleEndian.PutUint32(buf[off:], uint32(i))
 		off += 4
-		rho := make([]byte, NonceBytes)
+		rho := make([]byte, pr.params.NonceBytes)
 		rand.Read(rho)
 		copy(buf[off:], rho)
 		pr.nonces[i] = rho
@@ -96,11 +111,11 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 // CommitStep2 does DECS.Commit steps 2+3: given Γ, compute R_k = M_k + Σ_j Γ[k][j]*P_j.
 func (pr *Prover) CommitStep2(Gamma [][]uint64) []*ring.Poly {
 	r := len(pr.P)
-	pr.R = make([]*ring.Poly, Eta)
+	pr.R = make([]*ring.Poly, pr.params.Eta)
 	tmp := pr.ringQ.NewPoly()
 	tmp2 := pr.ringQ.NewPoly()
 
-	for k := 0; k < Eta; k++ {
+	for k := 0; k < pr.params.Eta; k++ {
 		// inv-NTT(M_k) → tmp
 		pr.ringQ.InvNTT(pr.Mvals[k], tmp)
 		pr.R[k] = tmp.CopyNew()
@@ -129,8 +144,8 @@ func (pr *Prover) EvalOpen(E []int) *DECSOpening {
 		for j := 0; j < r; j++ {
 			open.Pvals[t][j] = pr.Pvals[j].Coeffs[0][idx]
 		}
-		open.Mvals[t] = make([]uint64, Eta)
-		for k := 0; k < Eta; k++ {
+		open.Mvals[t] = make([]uint64, pr.params.Eta)
+		for k := 0; k < pr.params.Eta; k++ {
 			open.Mvals[t][k] = pr.Mvals[k].Coeffs[0][idx]
 		}
 		open.Paths[t] = pr.mt.Path(idx)

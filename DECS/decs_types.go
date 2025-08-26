@@ -9,9 +9,14 @@ type DECSOpening struct {
 	Nonces  [][]byte   // ρ_e for each e∈E
 }
 
-// Protocol constants – must match prover & verifier.
-const (
-	Eta        = 2    // number of mask polys η
-	Degree     = 4095 // max degree d
-	NonceBytes = 16   // size of each ρ
-)
+// Params bundles the protocol parameters for DECS.
+type Params struct {
+	Degree     int // max degree d ≤ N-1
+	Eta        int // number of mask polynomials η
+	NonceBytes int // size of each nonce ρ_e in bytes
+}
+
+// DefaultParams provides legacy parameters for callers that do not
+// explicitly configure DECS. It preserves the previous behaviour
+// (Degree=4095, Eta=2, NonceBytes=16).
+var DefaultParams = Params{Degree: 4095, Eta: 2, NonceBytes: 16}

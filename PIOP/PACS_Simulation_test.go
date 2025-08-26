@@ -204,7 +204,7 @@ func TestPACSTampering(t *testing.T) {
 	t.Run("LVCS/degree: tamper R_k degree", func(t *testing.T) {
 		t.Parallel()
 		ctx, _, _, _ := buildSim(t)
-		if ctx.ringQ.N-1 <= decs.Degree {
+		if ctx.ringQ.N-1 <= decs.DefaultParams.Degree {
 			t.Skip("ring dimension too small to exceed degree bound")
 		}
 		R := make([]*ring.Poly, len(ctx.vrf.R))
@@ -213,7 +213,7 @@ func TestPACSTampering(t *testing.T) {
 		}
 		coeff := ctx.ringQ.NewPoly()
 		ctx.ringQ.InvNTT(R[0], coeff)
-		idx := decs.Degree + 1
+		idx := decs.DefaultParams.Degree + 1
 		coeff.Coeffs[0][idx] = (coeff.Coeffs[0][idx] + 1) % ctx.q
 		ctx.ringQ.NTT(coeff, R[0])
 		if ctx.vrf.CommitStep2(R) {
@@ -433,7 +433,7 @@ func buildSimWith(t *testing.T, o SimOpts) (*simCtx, bool, bool, bool) {
 	rows := columnsToRows(ringQ, w1, w2, w3, ell, omega)
 	root, pk, _ := lvcs.CommitInit(ringQ, rows, ell)
 
-	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.Eta, ncols)
+	vrf := lvcs.NewVerifier(ringQ, len(rows), decs.DefaultParams.Eta, ncols)
 	Gamma := vrf.CommitStep1(root)
 	Rpolys := lvcs.CommitFinish(pk, Gamma)
 	if !vrf.CommitStep2(Rpolys) {

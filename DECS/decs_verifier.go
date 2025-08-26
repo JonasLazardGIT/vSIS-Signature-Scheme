@@ -9,25 +9,41 @@ import (
 // Verifier holds DECS verification parameters.
 type Verifier struct {
 	ringQ  *ring.Ring
-	r, eta int
+	r      int
+	params Params
 }
 
-// NewVerifier constructs a DECS verifier for r×η.
+// NewVerifierWithParams constructs a DECS verifier for r×η with the provided
+// parameters. It panics if params.Degree is not in [0,N).
+func NewVerifierWithParams(ringQ *ring.Ring, r int, params Params) *Verifier {
+	if params.Degree < 0 || params.Degree >= int(ringQ.N) {
+		panic("decs: invalid degree parameter")
+	}
+	return &Verifier{ringQ: ringQ, r: r, params: params}
+}
+
+// NewVerifier constructs a verifier with DefaultParams and the supplied η.
+// It is retained for backwards compatibility.
 func NewVerifier(ringQ *ring.Ring, r, eta int) *Verifier {
-	return &Verifier{ringQ: ringQ, r: r, eta: eta}
+	params := DefaultParams
+	params.Eta = eta
+	if params.Degree >= int(ringQ.N) {
+		params.Degree = int(ringQ.N) - 1
+	}
+	return NewVerifierWithParams(ringQ, r, params)
 }
 
 // DeriveGamma runs step 2 (commit → Γ).
 func (v *Verifier) DeriveGamma(root [32]byte) [][]uint64 {
 	q := v.ringQ.Modulus[0]
-	return DeriveGamma(root, v.eta, v.r, q)
+	return DeriveGamma(root, v.params.Eta, v.r, q)
 }
 
 // VerifyCommit checks deg R_k <= Degree (DECS §3 Step 3).
 func (v *Verifier) VerifyCommit(root [32]byte, R []*ring.Poly, Gamma [][]uint64) bool {
 	for _, p := range R {
 		coeffs := p.Coeffs[0] // coeff domain
-		for i := Degree + 1; i < len(coeffs); i++ {
+		for i := v.params.Degree + 1; i < len(coeffs); i++ {
 			if coeffs[i] != 0 {
 				return false // degree too large
 			}
@@ -41,9 +57,9 @@ func (v *Verifier) VerifyEval(
 	root [32]byte, Gamma [][]uint64, R []*ring.Poly,
 	open *DECSOpening,
 ) bool {
-	// pre-NTT R
-	Re := make([]*ring.Poly, v.eta)
-	for k := 0; k < v.eta; k++ {
+	// NTT(R)
+	Re := make([]*ring.Poly, v.params.Eta)
+	for k := 0; k < v.params.Eta; k++ {
 		Re[k] = v.ringQ.NewPoly()
 		v.ringQ.NTT(R[k], Re[k])
 	}
@@ -52,13 +68,13 @@ func (v *Verifier) VerifyEval(
 
 	for t, idx := range open.Indices {
 		// rebuild leaf
-		buf := make([]byte, 4*(v.r+v.eta)+4+NonceBytes)
+		buf := make([]byte, 4*(v.r+v.params.Eta)+4+v.params.NonceBytes)
 		off := 0
 		for j := 0; j < v.r; j++ {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(open.Pvals[t][j]))
 			off += 4
 		}
-		for k := 0; k < v.eta; k++ {
+		for k := 0; k < v.params.Eta; k++ {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(open.Mvals[t][k]))
 			off += 4
 		}
@@ -70,7 +86,7 @@ func (v *Verifier) VerifyEval(
 			return false
 		}
 
-		for k := 0; k < v.eta; k++ {
+		for k := 0; k < v.params.Eta; k++ {
 			lhs := Re[k].Coeffs[0][idx]
 			rhs := open.Mvals[t][k]
 			for j := 0; j < v.r; j++ {

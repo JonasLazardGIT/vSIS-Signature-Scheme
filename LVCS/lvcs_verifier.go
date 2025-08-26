@@ -12,24 +12,35 @@ import (
 // VerifierState holds verifier‐side LVCS state.
 type VerifierState struct {
 	RingQ  *ring.Ring
-	r, eta int
-	ncols  int
+	r      int
+	params decs.Params
 
 	Root  [32]byte
 	Gamma [][]uint64
 	R     []*ring.Poly
 }
 
-// NewVerifier constructs the LVCS verifier.
+// NewVerifierWithParams constructs the LVCS verifier with explicit DECS params.
+func NewVerifierWithParams(ringQ *ring.Ring, r int, params decs.Params) *VerifierState {
+	return &VerifierState{RingQ: ringQ, r: r, params: params}
+}
+
+// NewVerifier is a backwards-compatible helper taking η and ncols. ncols is
+// ignored (EvalStep2 derives it from bar), but kept for API compatibility.
 func NewVerifier(ringQ *ring.Ring, r, eta, ncols int) *VerifierState {
-	return &VerifierState{RingQ: ringQ, r: r, eta: eta, ncols: ncols}
+	params := decs.DefaultParams
+	params.Eta = eta
+	if params.Degree >= int(ringQ.N) {
+		params.Degree = int(ringQ.N) - 1
+	}
+	return NewVerifierWithParams(ringQ, r, params)
 }
 
 // CommitStep1 – §4.1 steps 1–3:
 // Commit all those polynomials via DECS and record the commitment root.
 func (v *VerifierState) CommitStep1(root [32]byte) [][]uint64 {
 	v.Root = root
-	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
+	decv := decs.NewVerifierWithParams(v.RingQ, v.r, v.params)
 	v.Gamma = decv.DeriveGamma(root)
 	return v.Gamma
 }
@@ -39,7 +50,7 @@ func (v *VerifierState) CommitStep2(R []*ring.Poly) bool {
 	v.R = R
 	for _, p := range R {
 		// quick degree bound using coeff-form length
-		if deg(p) > decs.Degree {
+		if deg(p) > v.params.Degree {
 			return false
 		}
 	}
@@ -81,7 +92,7 @@ func (v *VerifierState) ChooseE(ell, ncols int) []int {
 // *simplified* verifier: only Merkle + degree test (bar / C not needed
 // by the current one-shot simulation).
 func (v *VerifierState) EvalStep2Slim(open *decs.DECSOpening) bool {
-	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
+	decv := decs.NewVerifierWithParams(v.RingQ, v.r, v.params)
 	return decv.VerifyEval(v.Root, v.Gamma, v.R, open)
 }
 
@@ -94,11 +105,14 @@ func (v *VerifierState) EvalStep2(
 	C [][]uint64, // coefficient matrix
 ) bool {
 	// enforce tail-only and exact cardinality
-	ncols := v.ncols
-	if len(E) != len(bar[0]) {
+	if len(bar) == 0 {
 		return false
 	}
 	ell := len(bar[0])
+	ncols := int(v.RingQ.N) - ell
+	if len(E) != ell {
+		return false
+	}
 	for _, idx := range E {
 		if idx < ncols || idx >= ncols+ell {
 			return false
@@ -111,7 +125,7 @@ func (v *VerifierState) EvalStep2(
 	}
 
 	// 1) Merkle + masked-relation check (now bound to E)
-	decv := decs.NewVerifier(v.RingQ, v.r, v.eta)
+	decv := decs.NewVerifierWithParams(v.RingQ, v.r, v.params)
 	if !decv.VerifyEvalAt(v.Root, v.Gamma, v.R, open, E) {
 		return false
 	}
@@ -119,9 +133,6 @@ func (v *VerifierState) EvalStep2(
 	// 2) check only the masked positions
 	mod := v.RingQ.Modulus[0]
 	for t, idx := range open.Indices {
-		if idx < ncols || idx >= ncols+ell {
-			return false
-		}
 		maskedPos := idx - ncols
 		for k := range bar {
 			acc := uint64(0)

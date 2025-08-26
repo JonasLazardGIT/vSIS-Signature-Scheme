@@ -23,15 +23,17 @@ type ProverKey struct {
 	MaskPolys []*ring.Poly // the η=ℓ′ mask-polynomials  M_i(X)  (NTT domain)
 	RowPolys  []*ring.Poly // one polynomial per *row*
 	Gamma     [][]uint64   // gamma values for the prover
+	Params    decs.Params  // DECS parameters
 }
 
-// CommitInit – §4.1 steps 1–2:
+// CommitInitWithParams – §4.1 steps 1–2:
 // Lift each row vector to a degree-(N+ℓ−1) polynomial by appending ℓ random masks
-// and commit all those polynomials via DECS.
-func CommitInit(
+// and commit all those polynomials via DECS using the provided parameters.
+func CommitInitWithParams(
 	ringQ *ring.Ring,
 	rows [][]uint64, // r_j in F_q^N
 	ell int, // ℓ
+	params decs.Params,
 ) (
 	root [32]byte,
 	prover *ProverKey,
@@ -61,11 +63,11 @@ func CommitInit(
 
 	// 2) DECS.CommitInit  (keeps P_j in coeff-form; we keep a *copy*
 	//    in NTT domain for the PACS layer → RowPolys)
-	dprover := decs.NewProver(ringQ, polys)
+	dprover := decs.NewProverWithParams(ringQ, polys, params)
 	if root, err = dprover.CommitInit(); err != nil {
 		return
 	}
-	Gamma := decs.DeriveGamma(root, decs.Eta, nrows, q0)
+	Gamma := decs.DeriveGamma(root, params.Eta, nrows, q0)
 
 	// lift P_j to NTT for later reuse
 	rowsNTT := make([]*ring.Poly, nrows)
@@ -76,8 +78,8 @@ func CommitInit(
 
 	// the DECS masks are already in coeff-form inside dprover.M – take a
 	// *reference* so PACS can build Q without poking into the DECS package.
-	masksNTT := make([]*ring.Poly, decs.Eta)
-	for i := 0; i < decs.Eta; i++ {
+	masksNTT := make([]*ring.Poly, params.Eta)
+	for i := 0; i < params.Eta; i++ {
 		masksNTT[i] = ringQ.NewPoly()
 		ringQ.NTT(dprover.M[i], masksNTT[i])
 	}
@@ -89,8 +91,22 @@ func CommitInit(
 		RowPolys:   rowsNTT,
 		MaskPolys:  masksNTT,
 		Gamma:      Gamma,
+		Params:     params,
 	}
 	return
+}
+
+// CommitInit is the legacy helper that uses decs.DefaultParams.
+func CommitInit(
+	ringQ *ring.Ring,
+	rows [][]uint64,
+	ell int,
+) (root [32]byte, prover *ProverKey, err error) {
+	params := decs.DefaultParams
+	if params.Degree >= int(ringQ.N) {
+		params.Degree = int(ringQ.N) - 1
+	}
+	return CommitInitWithParams(ringQ, rows, ell, params)
 }
 
 // CommitFinish – §4.1 step 3:
