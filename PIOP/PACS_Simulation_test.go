@@ -120,7 +120,7 @@ func deepCopyOpen(o *decs.DECSOpening) *decs.DECSOpening {
 func TestPACSSimulation(t *testing.T) {
 	_, okLin, okEq4, okSum := buildSim(t)
 	if !(okLin && okEq4 && okSum) {
-		t.Fatalf("verifier rejected – some check failed")
+		t.Fatalf("verifier rejected – some check failed, OkLin= %v, OkEq4= %v, OkSum= %v", okLin, okEq4, okSum)
 	}
 }
 
