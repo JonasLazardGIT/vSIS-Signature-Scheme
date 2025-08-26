@@ -18,7 +18,6 @@ package PIOP
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"math"
@@ -44,23 +43,256 @@ type transcript struct {
 	Flags               struct{ Merkle, Deg, LinMap, Eq4, Sum bool }
 }
 
+type simCtx struct {
+	ringQ  *ring.Ring
+	q      uint64
+	omega  []uint64
+	w1     []*ring.Poly
+	w2     *ring.Poly
+	w3     []*ring.Poly
+	A      [][]*ring.Poly
+	b1     []*ring.Poly
+	B0c    []*ring.Poly
+	B0m    [][]*ring.Poly
+	B0r    [][]*ring.Poly
+	E      []int
+	bar    [][]uint64
+	Fpar   []*ring.Poly
+	Fagg   []*ring.Poly
+	M      []*ring.Poly
+	Q      []*ring.Poly
+	GammaP [][]uint64
+	gammaP [][]uint64
+	open   *lvcs.Opening
+	vrf    *lvcs.VerifierState
+	C      [][]uint64
+	pk     *lvcs.ProverKey
+}
+
+// -------- Simulator options (for param sweeps & targeted faults) --------
+type SimOpts struct {
+	Ell      int  // # masked points per row (ℓ). If 0, use 1.
+	Ncols    int  // |Ω|. If 0, use 8.
+	Rho      int  // batching. If 0, use 1.
+	FSforC   bool // derive C via FS. Default true in tests.
+	TailOnly bool // force E on masked tail. Default true in tests.
+	BindSqs  bool // bind Sqs in same commitment (default true).
+}
+
+func bumpAt(r *ring.Ring, p *ring.Poly, idx int, q uint64) {
+	tmp := r.NewPoly()
+	r.InvNTT(p, tmp)
+	tmp.Coeffs[0][idx] = (tmp.Coeffs[0][idx] + 1) % q
+	r.NTT(tmp, p)
+}
+
+func bumpConst(r *ring.Ring, p *ring.Poly, q uint64) { bumpAt(r, p, 0, q) }
+
+func deepCopyOpen(o *decs.DECSOpening) *decs.DECSOpening {
+	if o == nil {
+		return nil
+	}
+	cp := *o
+	if o.Indices != nil {
+		cp.Indices = append([]int(nil), o.Indices...)
+	}
+	if o.Pvals != nil {
+		cp.Pvals = make([][]uint64, len(o.Pvals))
+		for i := range o.Pvals {
+			cp.Pvals[i] = append([]uint64(nil), o.Pvals[i]...)
+		}
+	}
+	if o.Paths != nil {
+		cp.Paths = make([][][]byte, len(o.Paths))
+		for i := range o.Paths {
+			cp.Paths[i] = make([][]byte, len(o.Paths[i]))
+			for j := range o.Paths[i] {
+				cp.Paths[i][j] = append([]byte(nil), o.Paths[i][j]...)
+			}
+		}
+	}
+	return &cp
+}
+
 // --------------------------------------------------------------------------
 // go test entry‑point
 // --------------------------------------------------------------------------
 func TestPACSSimulation(t *testing.T) {
-	if !RunPACSSimulation() {
+	_, okLin, okEq4, okSum := buildSim(t)
+	if !(okLin && okEq4 && okSum) {
 		t.Fatalf("verifier rejected – some check failed")
 	}
 }
 
-// Negative test: flip one bit and expect rejection.
-func TestPACSSimulationNegative(t *testing.T) {
-	t.Skip("tamper check disabled")
+func TestPACSTampering(t *testing.T) {
+	t.Run("LVCS/linear-map: tamper bar", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		ctx.bar[0][0] = (ctx.bar[0][0] + 1) % ctx.q
+		if ctx.vrf.EvalStep2(ctx.bar, ctx.E, ctx.open.DECSOpen, ctx.C) {
+			t.Fatalf("expected LVCS linear-map check to fail")
+		}
+	})
+	t.Run("LVCS/tail-only: reject head index in E", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		Ehead := append([]int(nil), ctx.E...)
+		Ehead[0] = 0
+		openHead := lvcs.EvalFinish(ctx.pk, Ehead)
+		if ctx.vrf.EvalStep2(ctx.bar, Ehead, openHead.DECSOpen, ctx.C) {
+			t.Fatalf("expected EvalStep2 to reject head index")
+		}
+	})
+	t.Run("LVCS/binding: mismatch between E and open.Indices", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		bad := deepCopyOpen(ctx.open.DECSOpen)
+		if len(bad.Indices) > 0 {
+			bad.Indices[0]++
+		}
+		if ctx.vrf.EvalStep2(ctx.bar, ctx.E, bad, ctx.C) {
+			t.Fatalf("expected EvalStep2 to reject mismatched E vs open.Indices")
+		}
+	})
+	t.Run("DECS/Merkle: tamper Pvals in opening", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		bad := deepCopyOpen(ctx.open.DECSOpen)
+		bad.Pvals[0][0] = (bad.Pvals[0][0] + 1) % ctx.q
+		if ctx.vrf.EvalStep2(ctx.bar, ctx.E, bad, ctx.C) {
+			t.Fatalf("expected Merkle/masked check to fail")
+		}
+	})
+	t.Run("DECS/Merkle: tamper Merkle path bytes", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		if len(ctx.open.DECSOpen.Paths) == 0 || len(ctx.open.DECSOpen.Paths[0]) == 0 {
+			t.Skip("no path to tamper")
+		}
+		bad := deepCopyOpen(ctx.open.DECSOpen)
+		bad.Paths[0][0][0] ^= 0x01
+		if ctx.vrf.EvalStep2(ctx.bar, ctx.E, bad, ctx.C) {
+			t.Fatalf("expected Merkle verification to fail")
+		}
+	})
+	t.Run("Eq4: tamper Q", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		bumpConst(ctx.ringQ, ctx.Q[0], ctx.q)
+		ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega)
+		if ok {
+			t.Fatalf("expected Eq.(4) check to fail")
+		}
+	})
+	t.Run("Eq4: tamper gammaPrime", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		ctx.gammaP[0][0] = (ctx.gammaP[0][0] + 1) % ctx.q
+		ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega)
+		if ok {
+			t.Fatalf("expected Eq.(4) check to fail")
+		}
+	})
+	t.Run("SumΩ: tamper Q constant", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		bumpConst(ctx.ringQ, ctx.Q[0], ctx.q)
+		if VerifyQ(ctx.ringQ, ctx.Q, ctx.omega) {
+			t.Fatalf("expected ΣΩ check to fail")
+		}
+	})
+	t.Run("LVCS/degree: tamper R_k degree", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		if ctx.ringQ.N-1 <= decs.Degree {
+			t.Skip("ring dimension too small to exceed degree bound")
+		}
+		R := make([]*ring.Poly, len(ctx.vrf.R))
+		for i, p := range ctx.vrf.R {
+			R[i] = p.CopyNew()
+		}
+		coeff := ctx.ringQ.NewPoly()
+		ctx.ringQ.InvNTT(R[0], coeff)
+		idx := decs.Degree + 1
+		coeff.Coeffs[0][idx] = (coeff.Coeffs[0][idx] + 1) % ctx.q
+		ctx.ringQ.NTT(coeff, R[0])
+		if ctx.vrf.CommitStep2(R) {
+			t.Fatalf("expected degree bound to fail")
+		}
+	})
+	t.Run("FullPACS: w3 != w1*w2", func(t *testing.T) {
+		t.Parallel()
+		ctx, _, _, _ := buildSim(t)
+		bumpConst(ctx.ringQ, ctx.w3[0], ctx.q)
+		if VerifyFullPACS(ctx.ringQ, ctx.w1, ctx.w2, ctx.w3, ctx.A, ctx.b1, ctx.B0c, ctx.B0m, ctx.B0r) {
+			t.Fatalf("expected FullPACS to fail on w3≠w1·w2")
+		}
+	})
 }
 
-// RunPACSSimulation executes one *interactive* proof and returns the verdict.
-func RunPACSSimulation() bool {
-	defer prof.Track(time.Now(), "RunPACSSimulation")
+func TestPACSParamGrid(t *testing.T) {
+	cases := []SimOpts{
+		{Ell: 1, Ncols: 8, Rho: 1, FSforC: true, TailOnly: true, BindSqs: true},
+	}
+	for i, o := range cases {
+		o := o
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			t.Parallel()
+			_, okLin, okEq4, okSum := buildSimWith(t, o)
+			if !(okLin && okEq4 && okSum) {
+				t.Fatalf("verifier rejected for opts %+v", o)
+			}
+		})
+	}
+}
+
+func TestEq4TamperMaskOnly(t *testing.T) {
+	ctx, _, _, _ := buildSim(t)
+	bumpConst(ctx.ringQ, ctx.M[0], ctx.q)
+	if checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega) {
+		t.Fatalf("Eq.(4) should fail when M is tampered")
+	}
+}
+
+func TestOmegaRejectsDuplicates(t *testing.T) {
+	par, _ := signer.LoadParams("../Parameters/Parameters.json")
+	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
+	q := ringQ.Modulus[0]
+	omega := []uint64{1 % q, 2 % q, 1 % q}
+	if err := checkOmega(omega, q); err == nil {
+		t.Fatalf("checkOmega must reject duplicates")
+	}
+}
+
+func TestPACSDeterminism(t *testing.T) {
+	_, a1, b1, c1 := buildSim(t)
+	_, a2, b2, c2 := buildSim(t)
+	if a1 != a2 || b1 != b2 || c1 != c2 {
+		t.Fatalf("verdicts changed")
+	}
+}
+
+func BenchmarkBuildSim(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		buildSimWith(nil, SimOpts{Ell: 1, Ncols: 8, Rho: 1, FSforC: true, TailOnly: true, BindSqs: true})
+	}
+}
+
+func buildSim(t *testing.T) (*simCtx, bool, bool, bool) {
+	return buildSimWith(t, SimOpts{Ell: 1, Ncols: 8, Rho: 1, FSforC: true, TailOnly: true, BindSqs: true})
+}
+
+func buildSimWith(t *testing.T, o SimOpts) (*simCtx, bool, bool, bool) {
+	defer prof.Track(time.Now(), "buildSimWith")
+	if o.Ell == 0 {
+		o.Ell = 1
+	}
+	if o.Ncols == 0 {
+		o.Ncols = 8
+	}
+	if o.Rho == 0 {
+		o.Rho = 1
+	}
 	// ------------------------------------------------------------- parameters
 	par, _ := signer.LoadParams("../Parameters/Parameters.json")
 	ringQ, _ := ring.NewRing(par.N, []uint64{par.Q})
@@ -71,9 +303,9 @@ func RunPACSSimulation() bool {
 	A, b1, B0c, B0m, B0r := loadPublicTables(ringQ)
 
 	// --- NEW: remake signature rows as coefficient-packing rows over Ω -------------
-	ell := 1 // keep your LVCS mask-per-row setting
+	ell := o.Ell
 	// build the evaluation grid Ω (size ncols used below)
-	ncols := 8
+	ncols := o.Ncols
 	px := ringQ.NewPoly()
 	px.Coeffs[0][1] = 1
 	pts := ringQ.NewPoly()
@@ -81,7 +313,7 @@ func RunPACSSimulation() bool {
 	omega := pts.Coeffs[0][:ncols]
 	if err := checkOmega(omega, q); err != nil {
 		fmt.Println("[Ω-check] ", err)
-		return false
+		return nil, false, false, false
 	}
 	S0 := uint64(len(omega))
 	S0inv := modInv(S0, q)
@@ -184,7 +416,9 @@ func RunPACSSimulation() bool {
 		panic(err)
 	}
 	// Bind Sqs in the same commitment as T,D,Bit: needed for T0 - Sqs = 0.
-	w1 = append(w1, Sqs)
+	if o.BindSqs {
+		w1 = append(w1, Sqs)
+	}
 
 	// (tight carry width): U_C = ceil(log2 |Ω|) + 1
 	{
@@ -204,19 +438,25 @@ func RunPACSSimulation() bool {
 	Rpolys := lvcs.CommitFinish(pk, Gamma)
 	if !vrf.CommitStep2(Rpolys) {
 		fmt.Println("[deg‑chk] R failed")
-		return false
+		return nil, false, false, false
 	}
 
 	// ---------------------------------------------------------- coefficient C
 	// We prove that  v = C·rows  where C is a *1×r* public matrix.
 	rRows := len(rows)
-	C := sampleRandMatrix(1, rRows, q) // shape 1×r  – deterministic helper
+	var C [][]uint64
+	if o.FSforC {
+		fsC := newFSRNG("C", root[:])
+		C = sampleFSMatrix(1, rRows, q, fsC)
+	} else {
+		C = sampleRandMatrix(1, rRows, q)
+	}
 
 	// ------------------------------------------------------- compute  bar[k][i]
 	bar := lvcs.EvalInit(ringQ, pk, C)
 
 	// ------------------------------------------------------- PACS batching
-	rho := 1
+	rho := o.Rho
 
 	FparCore := buildFpar(ringQ, w1[:origW1Len], w2, w3)
 	FparDec := buildFparIntegerDecomp(ringQ, Sqs, spec, cols)
@@ -254,30 +494,54 @@ func RunPACSSimulation() bool {
 	Q := BuildQ(ringQ, M, Fpar, Fagg, GammaP, gammaP)
 
 	// --------------------------------------------------------- verifier picks E
-	E := vrf.ChooseE(ell, ncols)
+	var E []int
+	if o.TailOnly {
+		if ell > 1 {
+			E = make([]int, ell)
+			for i := 0; i < ell; i++ {
+				E[i] = ncols + i
+			}
+		} else {
+			E = []int{ncols}
+		}
+	} else {
+		E = vrf.ChooseE(ell, ncols)
+	}
 
 	// --------------------------------------------------------- opening & check
 	open := lvcs.EvalFinish(pk, E)
-	okLin := vrf.EvalStep2(bar, E, open.DECSOpen, C)
-	if !okLin {
-		fmt.Println("[open] DECS linear‑map check failed")
-		return false
+
+	ctx := &simCtx{
+		ringQ:  ringQ,
+		q:      q,
+		omega:  omega,
+		w1:     w1,
+		w2:     w2,
+		w3:     w3,
+		A:      A,
+		b1:     b1,
+		B0c:    B0c,
+		B0m:    B0m,
+		B0r:    B0r,
+		E:      E,
+		bar:    bar,
+		Fpar:   Fpar,
+		Fagg:   Fagg,
+		M:      M,
+		Q:      Q,
+		GammaP: GammaP,
+		gammaP: gammaP,
+		open:   open,
+		vrf:    vrf,
+		C:      C,
+		pk:     pk,
 	}
 
+	okLin := vrf.EvalStep2(bar, E, open.DECSOpen, C)
 	okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP, omega)
 	okSum := VerifyQ(ringQ, Q, omega)
 
-	// --------------------------------------------------------- pretty print
-	tr := transcript{}
-	tr.Root = hex.EncodeToString(root[:])
-	tr.Gamma0 = firstColumn(Gamma)
-	tr.Rhash = hex.EncodeToString(Rh[:])
-	tr.GammaPrime0 = firstColumn(GammaP)
-	tr.E = E
-	tr.Flags = struct{ Merkle, Deg, LinMap, Eq4, Sum bool }{true, true, okLin, okEq4, okSum}
-	pretty(&tr)
-
-	return tr.Flags.Merkle && tr.Flags.Deg && tr.Flags.LinMap && tr.Flags.Eq4 && tr.Flags.Sum
+	return ctx, okLin, okEq4, okSum
 }
 
 // ============================================================================
