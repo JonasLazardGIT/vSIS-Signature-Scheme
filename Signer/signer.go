@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"time"
 
 	ps "vSIS-Signature/Preimage_Sampler"
 	Parameters "vSIS-Signature/System"
+	measure "vSIS-Signature/measure"
 	prof "vSIS-Signature/prof"
 	vsishash "vSIS-Signature/vSIS-HASH"
 
@@ -54,6 +56,13 @@ func Sign() {
 		log.Fatalf("ring.NewRing: %v", err)
 	}
 
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(params.Q)
+		bytesF := measure.BytesField(q)
+		bq := q.BitLen()
+		fmt.Printf("[measure] Params: q=%d bq=%d BytesF=%d phi=%d\n", params.Q, bq, bytesF, params.N)
+	}
+
 	var trap ps.Trapdoor
 	if fileExists("public_key/public_key.json") && fileExists("private_key/private_key.json") {
 		log.Println("Loading existing keypair...")
@@ -89,6 +98,12 @@ func Sign() {
 	mPoly := ringQ.NewPoly()
 	uni.Read(mPoly)
 	mCoeffs := append([]uint64(nil), mPoly.Coeffs[0]...)
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(params.Q)
+		bytesF := measure.BytesField(q)
+		measure.Global.Add("sign/message", int64(len(mCoeffs)*bytesF))
+		fmt.Printf("[measure] Sign input: |u|=%s\n", measure.Human(int64(len(mCoeffs)*bytesF)))
+	}
 	// 7) sample randomness x0, x1 ∈ R_q
 	x0Poly := ringQ.NewPoly()
 	x1Poly := ringQ.NewPoly()
@@ -96,6 +111,13 @@ func Sign() {
 	uni.Read(x1Poly)
 	x0Coeffs := append([]uint64(nil), x0Poly.Coeffs[0]...)
 	x1Coeffs := append([]uint64(nil), x1Poly.Coeffs[0]...)
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(params.Q)
+		bytesF := measure.BytesField(q)
+		measure.Global.Add("sign/x0", int64(len(x0Coeffs)*bytesF))
+		measure.Global.Add("sign/x1", int64(len(x1Coeffs)*bytesF))
+		fmt.Printf("[measure] |x0|=%s |x1|=%s\n", measure.Human(int64(len(x0Coeffs)*bytesF)), measure.Human(int64(len(x1Coeffs)*bytesF)))
+	}
 
 	// 8) compute BBS‐syndrome in Eval domain
 	tNTT, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mPoly, x0Poly, x1Poly)
@@ -106,6 +128,11 @@ func Sign() {
 	// extract target syndrome coefficients
 	tNTTCoeffs := append([]uint64(nil), tNTT.Coeffs[0]...)
 	fmt.Printf("Computed tNTT.Coeffs[0][:8]=%v\n", tNTTCoeffs[:8])
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(params.Q)
+		bytesF := measure.BytesField(q)
+		measure.Global.Add("sign/target", int64(len(tNTTCoeffs)*bytesF))
+	}
 	trap.K = params.K
 	// 9) Gaussian pre‐image sampling in Eval domain
 	sEval := ps.GaussSamp(
@@ -121,6 +148,14 @@ func Sign() {
 	for i, p := range sEval {
 		sNTT[i] = append([]uint64(nil), p.Coeffs[0]...)
 	}
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(params.Q)
+		bytesR := measure.BytesRing(params.N, q)
+		measure.Global.Add("sign/signature", int64(len(sNTT))*int64(bytesR))
+		chiBytes := int64(len(x0Coeffs)+len(x1Coeffs)) * int64(measure.BytesField(q))
+		measure.Global.Add("sign/chi", chiBytes)
+		fmt.Printf("[measure] Signature: |s|=%s |chi|=%s\n", measure.Human(int64(len(sNTT))*int64(bytesR)), measure.Human(chiBytes))
+	}
 
 	// 11) save everything in NTT domain, including target
 	if err := saveSignature(
@@ -130,6 +165,9 @@ func Sign() {
 		sNTT,
 	); err != nil {
 		log.Fatalf("saveSignature: %v", err)
+	}
+	if measure.Enabled {
+		measure.Global.Dump()
 	}
 	log.Println("✔ Signing complete")
 }

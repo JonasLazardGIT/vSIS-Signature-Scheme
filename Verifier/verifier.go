@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/big"
 	"os"
 	"time"
 
 	Parameters "vSIS-Signature/System"
+	measure "vSIS-Signature/measure"
 	prof "vSIS-Signature/prof"
 	vsishash "vSIS-Signature/vSIS-HASH"
 
@@ -44,6 +46,12 @@ func Verify() bool {
 	if err != nil {
 		log.Fatalf("ring.NewRing: %v", err)
 	}
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(pp.Q)
+		bytesF := measure.BytesField(q)
+		bq := q.BitLen()
+		fmt.Printf("[measure] Params: q=%d bq=%d BytesF=%d phi=%d\n", pp.Q, bq, bytesF, pp.N)
+	}
 
 	// 3) load public key
 	pk, err := loadPublicKey("public_key/public_key.json")
@@ -62,6 +70,21 @@ func Verify() bool {
 	sig, err := loadSignature("Signature/Signature.json")
 	if err != nil {
 		log.Fatalf("loading signature: %v", err)
+	}
+	if measure.Enabled {
+		q := new(big.Int).SetUint64(pp.Q)
+		bytesF := measure.BytesField(q)
+		measure.Global.Add("verify/message", int64(len(sig.Message)*bytesF))
+		measure.Global.Add("verify/x0", int64(len(sig.X0)*bytesF))
+		measure.Global.Add("verify/x1", int64(len(sig.X1)*bytesF))
+		measure.Global.Add("verify/target", int64(len(sig.Target)*bytesF))
+		bytesR := measure.BytesRing(pp.N, q)
+		measure.Global.Add("verify/signature", int64(len(sig.Signature))*int64(bytesR))
+		fmt.Printf("[measure] Loaded signature: |u|=%s |x0|=%s |x1|=%s |s|=%s\n",
+			measure.Human(int64(len(sig.Message)*bytesF)),
+			measure.Human(int64(len(sig.X0)*bytesF)),
+			measure.Human(int64(len(sig.X1)*bytesF)),
+			measure.Human(int64(len(sig.Signature))*int64(bytesR)))
 	}
 
 	// b₀ check: lengths
@@ -268,6 +291,9 @@ func Verify() bool {
 	log.Printf("✅ norm checks passed: max_i‖s_i‖₂ = %.4f,   √Σ‖s_i‖₂² = %.4f",
 		globalInfOverL2, globalL2OverL2)
 
+	if measure.Enabled {
+		measure.Global.Dump()
+	}
 	log.Println("✅ signature valid")
 	return true
 }
