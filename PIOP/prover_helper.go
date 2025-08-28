@@ -14,16 +14,17 @@
 package PIOP
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/binary"
-	"errors"
-	"fmt"
-	"math/big"
-	"time"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/binary"
+    "errors"
+    "fmt"
+    "math/big"
+    "time"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
-	prof "vSIS-Signature/prof"
+    "github.com/tuneinsight/lattigo/v4/ring"
+    measure "vSIS-Signature/measure"
+    prof "vSIS-Signature/prof"
 )
 
 var (
@@ -447,7 +448,7 @@ For each i, random coefficients a₁…a_{dQ} are chosen, then a₀ is set so th
 ΣΩ Qᵢ(ω) = 0. It panics if q divides |Ω| or Ω has duplicates.
 */
 func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPrime [][]uint64, gammaPrime [][]uint64, sumFpar []uint64, sumFagg []uint64) []*ring.Poly {
-	defer prof.Track(time.Now(), "BuildMaskPolynomials")
+    defer prof.Track(time.Now(), "BuildMaskPolynomials")
 
 	q := ringQ.Modulus[0]
 	s := uint64(len(omega))
@@ -496,7 +497,7 @@ func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPr
 	// -- allocate output -------------------------------------------------------
 	M := make([]*ring.Poly, rho)
 
-	for i := 0; i < rho; i++ {
+    for i := 0; i < rho; i++ {
 		coeffs := make([]uint64, ringQ.N)
 		for k := 1; k <= dQ; k++ {
 			coeffs[k] = randUint64Mod(q)
@@ -525,7 +526,12 @@ func BuildMaskPolynomials(ringQ *ring.Ring, rho, dQ int, omega []uint64, GammaPr
 			}
 			fmt.Printf("[mask %d] ΣΩ M_i = %d\n", i, sum)
 		}
-		M[i] = p
-	}
-	return M
+        M[i] = p
+    }
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(ringQ.Modulus[0])
+        bytesR := measure.BytesRing(ringQ.N, qb)
+        measure.Global.Add("piop/M", int64(len(M))*int64(bytesR))
+    }
+    return M
 }

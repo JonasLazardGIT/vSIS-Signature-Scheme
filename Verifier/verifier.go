@@ -291,9 +291,6 @@ func Verify() bool {
 	log.Printf("✅ norm checks passed: max_i‖s_i‖₂ = %.4f,   √Σ‖s_i‖₂² = %.4f",
 		globalInfOverL2, globalL2OverL2)
 
-	if measure.Enabled {
-		measure.Global.Dump()
-	}
 	log.Println("✅ signature valid")
 	return true
 }

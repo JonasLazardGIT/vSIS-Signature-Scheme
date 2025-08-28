@@ -1,10 +1,12 @@
 package PIOP
 
 import (
-	"time"
+    "math/big"
+    "time"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
-	prof "vSIS-Signature/prof"
+    measure "vSIS-Signature/measure"
+    "github.com/tuneinsight/lattigo/v4/ring"
+    prof "vSIS-Signature/prof"
 )
 
 type DecompCols struct {
@@ -15,24 +17,35 @@ type DecompCols struct {
 
 // appendDecompositionColumns allocates witness columns for digits, remainders and bits.
 func appendDecompositionColumns(r *ring.Ring, LS, W int) DecompCols {
-	defer prof.Track(time.Now(), "appendDecompositionColumns")
-	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
-	cols := DecompCols{
-		D:   make([]*ring.Poly, LS),
-		T:   make([]*ring.Poly, LS+1),
-		Bit: make([][]*ring.Poly, LS),
-	}
-	for i := 0; i < LS; i++ {
-		cols.D[i] = mk()
-		cols.Bit[i] = make([]*ring.Poly, W)
-		for u := 0; u < W; u++ {
-			cols.Bit[i][u] = mk()
-		}
-	}
-	for i := 0; i <= LS; i++ {
-		cols.T[i] = mk()
-	}
-	return cols
+    defer prof.Track(time.Now(), "appendDecompositionColumns")
+    mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
+    cols := DecompCols{
+        D:   make([]*ring.Poly, LS),
+        T:   make([]*ring.Poly, LS+1),
+        Bit: make([][]*ring.Poly, LS),
+    }
+    for i := 0; i < LS; i++ {
+        cols.D[i] = mk()
+        cols.Bit[i] = make([]*ring.Poly, W)
+        for u := 0; u < W; u++ {
+            cols.Bit[i][u] = mk()
+        }
+    }
+    for i := 0; i <= LS; i++ {
+        cols.T[i] = mk()
+    }
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        // D and T
+        measure.Global.Add("piop/witness/decomp/D", int64(len(cols.D))*int64(bytesR))
+        measure.Global.Add("piop/witness/decomp/T", int64(len(cols.T))*int64(bytesR))
+        // Bit count across all levels
+        bcount := 0
+        for i := 0; i < LS; i++ { bcount += len(cols.Bit[i]) }
+        measure.Global.Add("piop/witness/decomp/Bit", int64(bcount)*int64(bytesR))
+    }
+    return cols
 }
 
 // buildFparIntegerDecomp emits parallel rows for bitness, digit formation and remainder chain.
@@ -72,9 +85,14 @@ func buildFparIntegerDecomp(r *ring.Ring, Sqs *ring.Poly, spec BoundSpec, cols D
 		Fpar = append(Fpar, p)
 	}
 
-	// Final remainder T_LS should be zero
-	Fpar = append(Fpar, cols.T[LS].CopyNew())
-	return
+    // Final remainder T_LS should be zero
+    Fpar = append(Fpar, cols.T[LS].CopyNew())
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fpar/decomp", int64(len(Fpar))*int64(bytesR))
+    }
+    return
 }
 
 // bitnessPoly returns polynomial enforcing bitness: b^2 - b, with Hadamard square in coeff domain.
@@ -108,8 +126,13 @@ func BuildFparSqsCoupling(r *ring.Ring, Sqs *ring.Poly, sigRows []*ring.Poly) (F
 		r.NTT(sq, sq)
 		r.Add(sum, sq, sum)
 	}
-	p := r.NewPoly()
-	r.Sub(Sqs, sum, p)
-	Fpar = append(Fpar, p)
-	return
+    p := r.NewPoly()
+    r.Sub(Sqs, sum, p)
+    Fpar = append(Fpar, p)
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fpar/sqs", int64(len(Fpar))*int64(bytesR))
+    }
+    return
 }

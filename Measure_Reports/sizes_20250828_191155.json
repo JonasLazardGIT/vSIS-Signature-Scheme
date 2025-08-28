@@ -1,0 +1,60 @@
+{
+  "timestamp": "20250828_191155",
+  "entries": [
+    {
+      "key": "sign/chi",
+      "bytes": 3072,
+      "human": "3.0 KiB"
+    },
+    {
+      "key": "sign/message",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "sign/signature",
+      "bytes": 39936,
+      "human": "39.0 KiB"
+    },
+    {
+      "key": "sign/target",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "sign/x0",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "sign/x1",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "verify/message",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "verify/signature",
+      "bytes": 39936,
+      "human": "39.0 KiB"
+    },
+    {
+      "key": "verify/target",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "verify/x0",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "verify/x1",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    }
+  ]
+}

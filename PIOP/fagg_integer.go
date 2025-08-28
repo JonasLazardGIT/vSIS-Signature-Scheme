@@ -1,10 +1,12 @@
 package PIOP
 
 import (
-	"time"
+    "math/big"
+    "time"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
-	prof "vSIS-Signature/prof"
+    measure "vSIS-Signature/measure"
+    "github.com/tuneinsight/lattigo/v4/ring"
+    prof "vSIS-Signature/prof"
 )
 
 type GlobCarry struct {
@@ -14,20 +16,28 @@ type GlobCarry struct {
 
 // appendGlobalCarrys allocates global carry polys and bit columns.
 func appendGlobalCarrys(r *ring.Ring, LS, Wc int) GlobCarry {
-	defer prof.Track(time.Now(), "appendGlobalCarrys")
-	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
-	g := GlobCarry{
-		C:     make([]*ring.Poly, LS+1),
-		CBits: make([][]*ring.Poly, LS+1),
-	}
-	for l := 0; l <= LS; l++ {
-		g.C[l] = mk()
-		g.CBits[l] = make([]*ring.Poly, Wc)
-		for u := 0; u < Wc; u++ {
-			g.CBits[l][u] = mk()
-		}
-	}
-	return g
+    defer prof.Track(time.Now(), "appendGlobalCarrys")
+    mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
+    g := GlobCarry{
+        C:     make([]*ring.Poly, LS+1),
+        CBits: make([][]*ring.Poly, LS+1),
+    }
+    for l := 0; l <= LS; l++ {
+        g.C[l] = mk()
+        g.CBits[l] = make([]*ring.Poly, Wc)
+        for u := 0; u < Wc; u++ {
+            g.CBits[l][u] = mk()
+        }
+    }
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/witness/carry/C", int64(len(g.C))*int64(bytesR))
+        bitCount := 0
+        for l := 0; l < len(g.CBits); l++ { bitCount += len(g.CBits[l]) }
+        measure.Global.Add("piop/witness/carry/CBits", int64(bitCount)*int64(bytesR))
+    }
+    return g
 }
 
 // buildFparGlobCarryBits ties each carry to its bit decomposition.
@@ -49,10 +59,15 @@ func buildFparGlobCarryBits(r *ring.Ring, S0inv uint64, Wc int, g GlobCarry) (Fp
 		r.Sub(g.C[l], sum, p)
 		Fpar = append(Fpar, p)
 	}
-	// Boundary carries must be zero
-	Fpar = append(Fpar, g.C[0].CopyNew())
-	Fpar = append(Fpar, g.C[len(g.C)-1].CopyNew())
-	return
+    // Boundary carries must be zero
+    Fpar = append(Fpar, g.C[0].CopyNew())
+    Fpar = append(Fpar, g.C[len(g.C)-1].CopyNew())
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fpar/carry_bits", int64(len(Fpar))*int64(bytesR))
+    }
+    return
 }
 
 // buildFaggIntegerSum constructs aggregated limb-sum rows without slack.
@@ -60,7 +75,7 @@ func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, cols De
 	defer prof.Track(time.Now(), "buildFaggIntegerSum")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
 	scratch := r.NewPoly()
-	for l := 0; l < LS; l++ {
+    for l := 0; l < LS; l++ {
 		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
 		constD := makeConstRow(r, modMul(sumOmegaD%q, S0inv%q, q))
 
@@ -75,16 +90,21 @@ func buildFaggIntegerSum(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, cols De
 		tmp := r.NewPoly()
 		scalePolyNTT(r, g.C[l+1], R%q, tmp)
 		r.Sub(p, tmp, p)
-		Fagg = append(Fagg, p)
-	}
-	return
+        Fagg = append(Fagg, p)
+    }
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fagg/sum", int64(len(Fagg))*int64(bytesR))
+    }
+    return
 }
 
 // buildFparGlobSlackBits ties slack digits to their bit decompositions.
 func buildFparGlobSlackBits(r *ring.Ring, S0inv uint64, W int, s GlobSlack) (Fpar []*ring.Poly) {
 	defer prof.Track(time.Now(), "buildFparGlobSlackBits")
 	q := r.Modulus[0]
-	for l := 0; l < len(s.D); l++ {
+    for l := 0; l < len(s.D); l++ {
 		for u := 0; u < W; u++ {
 			Fpar = append(Fpar, bitnessPoly(r, s.DBits[l][u]))
 		}
@@ -97,9 +117,14 @@ func buildFparGlobSlackBits(r *ring.Ring, S0inv uint64, W int, s GlobSlack) (Fpa
 		}
 		p := r.NewPoly()
 		r.Sub(s.D[l], sum, p)
-		Fpar = append(Fpar, p)
-	}
-	return
+        Fpar = append(Fpar, p)
+    }
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fpar/slack_bits", int64(len(Fpar))*int64(bytesR))
+    }
+    return
 }
 
 // buildFaggIntegerSumDelta includes slack digits in the aggregated rows.
@@ -107,7 +132,7 @@ func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, co
 	defer prof.Track(time.Now(), "buildFaggIntegerSumDelta")
 	LS, R, q := spec.LS, spec.R, r.Modulus[0]
 	scratch := r.NewPoly()
-	for l := 0; l < LS; l++ {
+    for l := 0; l < LS; l++ {
 		sumOmegaD := sumEvals(r, cols.D[l], omega, scratch)
 		constD := makeConstRow(r, modMul(sumOmegaD%q, S0inv%q, q))
 
@@ -123,7 +148,12 @@ func buildFaggIntegerSumDelta(r *ring.Ring, spec BoundSpec, S0, S0inv uint64, co
 		tmp := r.NewPoly()
 		scalePolyNTT(r, g.C[l+1], R%q, tmp)
 		r.Sub(p, tmp, p)
-		Fagg = append(Fagg, p)
-	}
-	return
+        Fagg = append(Fagg, p)
+    }
+    if measure.Enabled {
+        q := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, q)
+        measure.Global.Add("piop/Fagg/sum_delta", int64(len(Fagg))*int64(bytesR))
+    }
+    return
 }

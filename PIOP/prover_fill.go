@@ -1,12 +1,13 @@
 package PIOP
 
 import (
-	"math/big"
-	"time"
+    "math/big"
+    "time"
 
-	prof "vSIS-Signature/prof"
+    measure "vSIS-Signature/measure"
+    prof "vSIS-Signature/prof"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
+    "github.com/tuneinsight/lattigo/v4/ring"
 )
 
 // TamperBit, when set by tests, flips a digit-bit row by +1 (as a constant),
@@ -21,20 +22,28 @@ type GlobSlack struct {
 
 // appendGlobalSlack allocates slack digit columns.
 func appendGlobalSlack(r *ring.Ring, LS, W int) GlobSlack {
-	defer prof.Track(time.Now(), "appendGlobalSlack")
-	mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
-	s := GlobSlack{
-		D:     make([]*ring.Poly, LS),
-		DBits: make([][]*ring.Poly, LS),
-	}
-	for l := 0; l < LS; l++ {
-		s.D[l] = mk()
-		s.DBits[l] = make([]*ring.Poly, W)
-		for u := 0; u < W; u++ {
-			s.DBits[l][u] = mk()
-		}
-	}
-	return s
+    defer prof.Track(time.Now(), "appendGlobalSlack")
+    mk := func() *ring.Poly { p := r.NewPoly(); r.NTT(p, p); return p }
+    s := GlobSlack{
+        D:     make([]*ring.Poly, LS),
+        DBits: make([][]*ring.Poly, LS),
+    }
+    for l := 0; l < LS; l++ {
+        s.D[l] = mk()
+        s.DBits[l] = make([]*ring.Poly, W)
+        for u := 0; u < W; u++ {
+            s.DBits[l][u] = mk()
+        }
+    }
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, qb)
+        measure.Global.Add("piop/witness/slack/D", int64(len(s.D))*int64(bytesR))
+        bitCount := 0
+        for l := 0; l < len(s.DBits); l++ { bitCount += len(s.DBits[l]) }
+        measure.Global.Add("piop/witness/slack/DBits", int64(bitCount)*int64(bytesR))
+    }
+    return s
 }
 
 // ProverFillIntegerL2 populates all limb digits, remainder chains, slack and carries.
@@ -97,7 +106,12 @@ func ProverFillIntegerL2(
 		}
 	}
 
-	Sqs := buildValueRow(r, sqsVals, omega, ell)
+    Sqs := buildValueRow(r, sqsVals, omega, ell)
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, qb)
+        measure.Global.Add("piop/witness/Sqs", int64(1*bytesR))
+    }
 
 	for l := 0; l < LS; l++ {
 		cols.D[l] = buildValueRow(r, Drows[l], omega, ell)
@@ -162,9 +176,9 @@ func ProverFillIntegerL2(
 		carries[l+1] = cnext
 	}
 
-	fillSlackDigits(r, slack, DeltaLimbs, S0inv, q, R, W)
-	fillCarries(r, glob, carries, S0inv, q, R)
-	return Sqs, nil
+    fillSlackDigits(r, slack, DeltaLimbs, S0inv, q, R, W)
+    fillCarries(r, glob, carries, S0inv, q, R)
+    return Sqs, nil
 }
 
 func fillConstUint64(r *ring.Ring, p *ring.Poly, val uint64, q uint64) {

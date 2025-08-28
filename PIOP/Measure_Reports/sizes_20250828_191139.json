@@ -1,0 +1,90 @@
+{
+  "timestamp": "20250828_191139",
+  "entries": [
+    {
+      "key": "piop/Fagg/omega",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "piop/Fagg/sum_delta",
+      "bytes": 3072,
+      "human": "3.0 KiB"
+    },
+    {
+      "key": "piop/Fpar/carry_bits",
+      "bytes": 26112,
+      "human": "25.5 KiB"
+    },
+    {
+      "key": "piop/Fpar/core",
+      "bytes": 43008,
+      "human": "42.0 KiB"
+    },
+    {
+      "key": "piop/Fpar/decomp",
+      "bytes": 46080,
+      "human": "45.0 KiB"
+    },
+    {
+      "key": "piop/Fpar/slack_bits",
+      "bytes": 39936,
+      "human": "39.0 KiB"
+    },
+    {
+      "key": "piop/Fpar/sqs",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "piop/M",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "piop/Q",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "piop/witness/Sqs",
+      "bytes": 1536,
+      "human": "1.5 KiB"
+    },
+    {
+      "key": "piop/witness/carry/C",
+      "bytes": 4608,
+      "human": "4.5 KiB"
+    },
+    {
+      "key": "piop/witness/carry/CBits",
+      "bytes": 18432,
+      "human": "18.0 KiB"
+    },
+    {
+      "key": "piop/witness/decomp/Bit",
+      "bytes": 36864,
+      "human": "36.0 KiB"
+    },
+    {
+      "key": "piop/witness/decomp/D",
+      "bytes": 3072,
+      "human": "3.0 KiB"
+    },
+    {
+      "key": "piop/witness/decomp/T",
+      "bytes": 4608,
+      "human": "4.5 KiB"
+    },
+    {
+      "key": "piop/witness/slack/D",
+      "bytes": 3072,
+      "human": "3.0 KiB"
+    },
+    {
+      "key": "piop/witness/slack/DBits",
+      "bytes": 36864,
+      "human": "36.0 KiB"
+    }
+  ]
+}

@@ -46,14 +46,14 @@ Setting the environment variable `MEASURE_SIZES=1` enables additional size accou
 MEASURE_SIZES=1 go run ./cmd
 ```
 
-When enabled, any call to `measure.Global.Dump()` prints a human-readable report and writes a JSON file under `Measure_Reports/` with a timestamped filename (e.g., `sizes_YYYYMMDD_HHMMSS.json`).
+When enabled, any call to `measure.Global.Dump()` prints a human-readable report and writes a JSON file under `Measure_Reports/` with a timestamped filename (e.g., `sizes_YYYYMMDD_HHMMSS.json`). The main `cmd` program now emits a single consolidated report at the end of the run (combining both signing and verification phases).
 
 Optional overrides:
 
 - `MEASURE_SIZES_DIR`: directory to place reports (default `Measure_Reports`).
 - `MEASURE_SIZES_FILE`: full path for the output file. If it points to a directory, a default timestamped filename is created inside it.
 
-In tests, the PIOP package now emits a single report at the end of the test run if `MEASURE_SIZES=1` is set.
+In tests, the PIOP package now emits a single report at the end of the test run if `MEASURE_SIZES=1` is set. Additional counters are wired into PIOP to track key sizes such as witness columns (decomposition, carries, slack), masks `M`, and polynomials `Q`, plus the constructed constraint rows `Fpar`/`Fagg`.
 
 ### Distribution analysis build
 

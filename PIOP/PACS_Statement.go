@@ -2,14 +2,16 @@
 package PIOP
 
 import (
-	"encoding/binary"
-	"fmt"
-	"log"
-	"time"
-	signer "vSIS-Signature/Signer"
-	prof "vSIS-Signature/prof"
+    "encoding/binary"
+    "fmt"
+    "log"
+    "math/big"
+    "time"
+    signer "vSIS-Signature/Signer"
+    measure "vSIS-Signature/measure"
+    prof "vSIS-Signature/prof"
 
-	"github.com/tuneinsight/lattigo/v4/ring"
+    "github.com/tuneinsight/lattigo/v4/ring"
 )
 
 // -----------------------------------------------------------------------------
@@ -194,14 +196,14 @@ func BuildThetaPrimeSet(
 //
 // output:  []*ring.Poly   len = rho
 func BuildQ(
-	ringQ *ring.Ring,
-	M []*ring.Poly,
-	Fpar []*ring.Poly,
-	Fagg []*ring.Poly,
-	GammaPrime [][]uint64,
-	gammaPrime [][]uint64,
+    ringQ *ring.Ring,
+    M []*ring.Poly,
+    Fpar []*ring.Poly,
+    Fagg []*ring.Poly,
+    GammaPrime [][]uint64,
+    gammaPrime [][]uint64,
 ) []*ring.Poly {
-	defer prof.Track(time.Now(), "BuildQ")
+    defer prof.Track(time.Now(), "BuildQ")
 
 	rho := len(M)
 	m1 := len(Fpar)
@@ -209,8 +211,8 @@ func BuildQ(
 
 	Q := make([]*ring.Poly, rho)
 	tmp := ringQ.NewPoly()
-	for i := 0; i < rho; i++ {
-		Qi := M[i].CopyNew() // start with M_i(X)
+    for i := 0; i < rho; i++ {
+        Qi := M[i].CopyNew() // start with M_i(X)
 
 		// Σ_j Γ'_{i,j} * F_j(X)
 		for j := 0; j < m1; j++ {
@@ -222,9 +224,14 @@ func BuildQ(
 			mulScalarNTT(ringQ, Fagg[j], gammaPrime[i][j], tmp)
 			addInto(ringQ, Qi, tmp)
 		}
-		Q[i] = Qi
-	}
-	return Q
+        Q[i] = Qi
+    }
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(ringQ.Modulus[0])
+        bytesR := measure.BytesRing(ringQ.N, qb)
+        measure.Global.Add("piop/Q", int64(len(Q))*int64(bytesR))
+    }
+    return Q
 }
 
 // verify_q.go
@@ -478,12 +485,17 @@ func makeSigPolys(r *ring.Ring, rows [][]uint64) []*ring.Poly {
 
 // Fpar_k(X)  = w3_k - w1_k·w2
 func buildFpar(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly) []*ring.Poly {
-	defer prof.Track(time.Now(), "buildFpar")
-	out := make([]*ring.Poly, len(w1))
-	for k := range w1 {
-		out[k] = makeProductConstraint(r, w1[k], w2, w3[k])
-	}
-	return out
+    defer prof.Track(time.Now(), "buildFpar")
+    out := make([]*ring.Poly, len(w1))
+    for k := range w1 {
+        out[k] = makeProductConstraint(r, w1[k], w2, w3[k])
+    }
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, qb)
+        measure.Global.Add("piop/Fpar/core", int64(len(out))*int64(bytesR))
+    }
+    return out
 }
 
 // Fagg_j(X)  = (b1⊙A)s − (A·s)x1 − B0(1;u;x0)
@@ -541,12 +553,12 @@ func buildFagg(r *ring.Ring,
 //
 // Fagg_j(X) = (b1⊙A)_j(X) · S(X)  −  (A_j(X)·S(X))·X1(X)  −  B0_j(X)
 func buildFaggOnOmega(
-	r *ring.Ring,
-	w1 []*ring.Poly, w2 *ring.Poly,
-	theta *ThetaPrime, // built with BuildThetaPrimeSet(..., omega)
-	mSig int,
+    r *ring.Ring,
+    w1 []*ring.Poly, w2 *ring.Poly,
+    theta *ThetaPrime, // built with BuildThetaPrimeSet(..., omega)
+    mSig int,
 ) []*ring.Poly {
-	defer prof.Track(time.Now(), "buildFaggOnOmega")
+    defer prof.Track(time.Now(), "buildFaggOnOmega")
 
 	out := make([]*ring.Poly, len(theta.ARows))
 	tmp := r.NewPoly()
@@ -554,7 +566,7 @@ func buildFaggOnOmega(
 	left2 := r.NewPoly()
 	right := r.NewPoly()
 
-	for j := range theta.ARows {
+    for j := range theta.ARows {
 		// clear accumulators
 		resetPoly(left1)
 		resetPoly(left2)
@@ -589,9 +601,14 @@ func buildFaggOnOmega(
 		// F'_j(X) = left1 - left2 - right
 		r.Sub(left1, left2, tmp)
 		r.Sub(tmp, right, tmp)
-		out[j] = tmp.CopyNew()
-	}
-	return out
+        out[j] = tmp.CopyNew()
+    }
+    if measure.Enabled {
+        qb := new(big.Int).SetUint64(r.Modulus[0])
+        bytesR := measure.BytesRing(r.N, qb)
+        measure.Global.Add("piop/Fagg/omega", int64(len(out))*int64(bytesR))
+    }
+    return out
 }
 
 // random deg ≤ s-1 polys

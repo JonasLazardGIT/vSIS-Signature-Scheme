@@ -2,16 +2,17 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"time"
+    "fmt"
+    "log"
+    "time"
 
-	// "vSIS-Signature/Preimage_Sampler"
+    // "vSIS-Signature/Preimage_Sampler"
 
-	signer "vSIS-Signature/Signer"
-	Parameters "vSIS-Signature/System"
-	verifier "vSIS-Signature/Verifier"
-	prof "vSIS-Signature/prof"
+    signer "vSIS-Signature/Signer"
+    Parameters "vSIS-Signature/System"
+    verifier "vSIS-Signature/Verifier"
+    measure "vSIS-Signature/measure"
+    prof "vSIS-Signature/prof"
 )
 
 func main() {
@@ -30,6 +31,9 @@ func main() {
 	if ok := verifier.Verify(); !ok {
 		log.Fatal("❌ Signature verification failed")
 	}
+
+	// Emit a single consolidated measure report for the whole run
+	measure.Global.Dump()
 
 	fmt.Println("✅ All done.")
 }

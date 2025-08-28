@@ -166,9 +166,6 @@ func Sign() {
 	); err != nil {
 		log.Fatalf("saveSignature: %v", err)
 	}
-	if measure.Enabled {
-		measure.Global.Dump()
-	}
 	log.Println("✔ Signing complete")
 }
 
