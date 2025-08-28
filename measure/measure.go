@@ -1,18 +1,22 @@
 package measure
 
 import (
-	"fmt"
-	"math/big"
-	"os"
-	"sync"
+    "encoding/json"
+    "fmt"
+    "math/big"
+    "os"
+    "path/filepath"
+    "sort"
+    "sync"
+    "time"
 )
 
 var Enabled bool
 var Global Counter
 
 func init() {
-	Enabled = os.Getenv("MEASURE_SIZES") == "1"
-	Global = Counter{M: make(map[string]int64)}
+    Enabled = os.Getenv("MEASURE_SIZES") == "1"
+    Global = Counter{M: make(map[string]int64)}
 }
 
 func BytesField(q *big.Int) int {
@@ -62,21 +66,99 @@ func (c *Counter) Add(key string, n int64) {
 }
 
 func (c *Counter) Dump() {
-	if !Enabled {
-		return
-	}
-	fmt.Println("[measure] Size report:")
-	for k, v := range c.M {
-		fmt.Printf("[measure] %s = %s\n", k, Human(v))
-	}
+    if !Enabled {
+        return
+    }
+    fmt.Println("[measure] Size report:")
+    // Print to stdout in a stable order
+    keys := make([]string, 0, len(c.M))
+    for k := range c.M {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    for _, k := range keys {
+        v := c.M[k]
+        fmt.Printf("[measure] %s = %s\n", k, Human(v))
+    }
+
+    // Also persist to a JSON file
+    _ = os.MkdirAll(defaultOutDir(), 0o755)
+    outPath := outFilePath()
+    if err := c.dumpToJSON(outPath); err != nil {
+        fmt.Printf("[measure] failed writing report to %s: %v\n", outPath, err)
+    } else {
+        fmt.Printf("[measure] wrote report to %s\n", outPath)
+    }
 }
 
 func Section(name string, f func()) {
-	if !Enabled {
-		f()
-		return
-	}
-	fmt.Printf("[measure] Begin %s\n", name)
-	f()
-	fmt.Printf("[measure] End %s\n", name)
+    if !Enabled {
+        f()
+        return
+    }
+    fmt.Printf("[measure] Begin %s\n", name)
+    f()
+    fmt.Printf("[measure] End %s\n", name)
+}
+
+// dumpToJSON persists the current counter map to a pretty JSON file.
+func (c *Counter) dumpToJSON(path string) error {
+    // Build a stable list of entries
+    keys := make([]string, 0, len(c.M))
+    for k := range c.M {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    type entry struct {
+        Key   string `json:"key"`
+        Bytes int64  `json:"bytes"`
+        Human string `json:"human"`
+    }
+    payload := struct {
+        Timestamp string  `json:"timestamp"`
+        Entries   []entry `json:"entries"`
+    }{
+        Timestamp: time.Now().Format("20060102_150405"),
+        Entries:   make([]entry, 0, len(keys)),
+    }
+    for _, k := range keys {
+        v := c.M[k]
+        payload.Entries = append(payload.Entries, entry{Key: k, Bytes: v, Human: Human(v)})
+    }
+    f, err := os.Create(path)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    enc := json.NewEncoder(f)
+    enc.SetIndent("", "  ")
+    return enc.Encode(payload)
+}
+
+// defaultOutDir returns the folder to write size reports to.
+// Override with MEASURE_SIZES_DIR if set.
+func defaultOutDir() string {
+    if d := os.Getenv("MEASURE_SIZES_DIR"); d != "" {
+        return d
+    }
+    return "Measure_Reports"
+}
+
+// outFilePath returns the output file path for the current time.
+// Override with MEASURE_SIZES_FILE if set.
+func outFilePath() string {
+    if p := os.Getenv("MEASURE_SIZES_FILE"); p != "" {
+        // If a dir is provided, create a default filename inside it.
+        if info, err := os.Stat(p); err == nil && info.IsDir() {
+            return filepath.Join(p, defaultFileName())
+        }
+        // Else treat as full file path.
+        return p
+    }
+    return filepath.Join(defaultOutDir(), defaultFileName())
+}
+
+func defaultFileName() string {
+    ts := time.Now().Format("20060102_150405")
+    return fmt.Sprintf("sizes_%s.json", ts)
 }

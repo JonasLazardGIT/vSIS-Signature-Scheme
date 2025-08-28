@@ -40,13 +40,20 @@ Running the program creates or reuses several folders at the repository root:
 
 ### Measuring object sizes
 
-Setting the environment variable `MEASURE_SIZES=1` enables additional size accounting logs:
+Setting the environment variable `MEASURE_SIZES=1` enables additional size accounting and now also writes a JSON report to disk:
 
 ```
 MEASURE_SIZES=1 go run ./cmd
 ```
 
-The `measure` package activates when this variable equals `1`【F:measure/measure.go†L10-L17】.
+When enabled, any call to `measure.Global.Dump()` prints a human-readable report and writes a JSON file under `Measure_Reports/` with a timestamped filename (e.g., `sizes_YYYYMMDD_HHMMSS.json`).
+
+Optional overrides:
+
+- `MEASURE_SIZES_DIR`: directory to place reports (default `Measure_Reports`).
+- `MEASURE_SIZES_FILE`: full path for the output file. If it points to a directory, a default timestamped filename is created inside it.
+
+In tests, the PIOP package now emits a single report at the end of the test run if `MEASURE_SIZES=1` is set.
 
 ### Distribution analysis build
 
