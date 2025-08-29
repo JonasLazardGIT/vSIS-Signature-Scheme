@@ -73,4 +73,3 @@ Tuning guidance
   - Regenerate Parameters/Parameters.json and Parameters/Bmatrix.json.
   - Rebuild keypair (public/private key JSON) or ensure compatibility.
   - Run `go test ./...` to exercise DECS/LVCS/PIOP tests.
-
