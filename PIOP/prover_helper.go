@@ -238,15 +238,6 @@ func resetPoly(p *ring.Poly) {
 	}
 }
 
-// isZeroPoly returns true if all coefficients of p are zero.
-func isZeroPoly(p *ring.Poly) bool {
-	for _, v := range p.Coeffs[0] {
-		if v != 0 {
-			return false
-		}
-	}
-	return true
-}
 
 // sumEvals returns Σ_{ω∈Ω} P(ω) mod q. scratch must be a *ring.Poly reused by caller.
 func sumEvals(r *ring.Ring, P *ring.Poly, omega []uint64, scratch *ring.Poly) uint64 {

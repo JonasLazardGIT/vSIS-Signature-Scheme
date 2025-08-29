@@ -208,7 +208,7 @@ The `RunPACSSimulation()` function executes a single interactive simulation of t
 * **PACS Checks:**
 
   ```go
-  okEq4 := checkEq4OnOpening(...)
+  okEq4 := checkEq4OnOpening(..., ncols)
   okSum := VerifyQ(...)
   ```
 

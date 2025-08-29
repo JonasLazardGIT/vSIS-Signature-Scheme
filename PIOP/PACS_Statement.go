@@ -14,18 +14,6 @@ import (
     "github.com/tuneinsight/lattigo/v4/ring"
 )
 
-// -----------------------------------------------------------------------------
-// Θ   – all-zero constants for the parallel constraint f
-// -----------------------------------------------------------------------------
-
-// BuildTheta returns a slice of *ring.Poly – one per witness column – that
-// represent θ_{j,i,k}.  In our quadratic gate **all θ are zero**, so each
-// polynomial is simply the zero-poly in NTT domain.
-//
-// The caller supplies s = len(w1) so the slice matches the number of columns.
-func BuildTheta(ringQ *ring.Ring, s int) []*ring.Poly {
-	return BuildThetaZeros(ringQ, s) // helper defined earlier
-}
 
 // -----------------------------------------------------------------------------
 //  Small utility – evaluate a coefficient-domain polynomial  mod q
@@ -46,20 +34,6 @@ func EvalPoly(coeffs []uint64, x, q uint64) uint64 {
 	return res
 }
 
-// -----------------------------------------------------------------------------
-// Θ – all–zero parallel-constraint constants
-// -----------------------------------------------------------------------------
-
-// BuildThetaZeros returns s constant-zero polys (degree 0) in NTT form.
-// They materialise θ_{j,i,k}=0 for every i,k in our quadratic gate.
-func BuildThetaZeros(ringQ *ring.Ring, s int) []*ring.Poly {
-	zeros := make([]*ring.Poly, s)
-	z := ringQ.NewPoly() // already 0 in coeff & NTT
-	for i := 0; i < s; i++ {
-		zeros[i] = z.CopyNew()
-	}
-	return zeros
-}
 
 // -----------------------------------------------------------------------------
 // Θ′ – interpolating polys for public coefficients in f′
@@ -86,24 +60,7 @@ func BuildThetaPrime(ringQ *ring.Ring, values, omega []uint64) *ring.Poly {
 	return p
 }
 
-// -----------------------------------------------------------------------------
-// Pure evaluators for  f  and  f′
-// -----------------------------------------------------------------------------
-
-// EvalParallel returns   w3_k - w1_k*w2   ∈ F_q
-func EvalParallel(ringQ *ring.Ring, w1k, w2, w3k uint64) uint64 {
-	q := ringQ.Modulus[0]
-	return modSub(w3k, modMul(w1k, w2, q), q)
-}
-
-// EvalAggregated returns
-// (b1·A)s - (A·s)x1 - B0(1;u;x0)   for one *row* j   (mod q).
-//
-// Inputs are already the field sums for that row.
-func EvalAggregated(ringQ *ring.Ring, term1, term2, B0 uint64) uint64 {
-	q := ringQ.Modulus[0]
-	return modSub(modSub(term1, term2, q), B0, q)
-}
+// (All-zeros Θ for f is implicit; we do not keep a separate helper.)
 
 // -----------------------------------------------------------------------------
 // Θ′  – interpolating polys for every public coefficient appearing in f′

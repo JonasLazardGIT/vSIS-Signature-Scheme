@@ -79,27 +79,29 @@ func (pr *Prover) CommitInit() ([32]byte, error) {
 	// 1c) build leaves
 	leaves := make([][]byte, N)
 	pr.nonces = make([][]byte, N)
-	for i := 0; i < N; i++ {
-		buf := make([]byte, 4*(r+pr.params.Eta)+4+pr.params.NonceBytes)
-		off := 0
-		for j := 0; j < r; j++ {
-			binary.LittleEndian.PutUint32(buf[off:], uint32(pr.Pvals[j].Coeffs[0][i]))
-			off += 4
-		}
-		for k := 0; k < pr.params.Eta; k++ {
-			binary.LittleEndian.PutUint32(buf[off:], uint32(pr.Mvals[k].Coeffs[0][i]))
-			off += 4
-		}
-		binary.LittleEndian.PutUint32(buf[off:], uint32(i))
-		off += 4
-		rho := make([]byte, pr.params.NonceBytes)
-		rand.Read(rho)
-		copy(buf[off:], rho)
-		pr.nonces[i] = rho
+    for i := 0; i < N; i++ {
+        // pack P and M evaluations as uint64 to support q >= 2^32
+        buf := make([]byte, 8*(r+pr.params.Eta)+4+pr.params.NonceBytes)
+        off := 0
+        for j := 0; j < r; j++ {
+            binary.LittleEndian.PutUint64(buf[off:], pr.Pvals[j].Coeffs[0][i])
+            off += 8
+        }
+        for k := 0; k < pr.params.Eta; k++ {
+            binary.LittleEndian.PutUint64(buf[off:], pr.Mvals[k].Coeffs[0][i])
+            off += 8
+        }
+        // keep index as uint32 for compactness
+        binary.LittleEndian.PutUint32(buf[off:], uint32(i))
+        off += 4
+        rho := make([]byte, pr.params.NonceBytes)
+        rand.Read(rho)
+        copy(buf[off:], rho)
+        pr.nonces[i] = rho
 
-		// store the raw buffer; BuildMerkleTree will hash it
-		leaves[i] = append([]byte(nil), buf...)
-	}
+        // store the raw buffer; BuildMerkleTree will hash it
+        leaves[i] = append([]byte(nil), buf...)
+    }
 
 	// 1d) Merkle tree
 	pr.mt = BuildMerkleTree(leaves)

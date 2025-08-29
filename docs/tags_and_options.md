@@ -164,4 +164,4 @@ Running `go test ./...` executes all available package tests. The current suite 
   `GOMAXPROCS=2 go test ./PIOP`.
 * Benchmarks can be run with `go test -bench .` in any package containing benchmark functions.
 
-This documentation should provide a comprehensive reference for executing and customizing the main program and test suites within the repository.
+This documentation should provide a comprehensive reference for executing and customizing the main program and test suites within the repository. For a consolidated description of all tunable parameters and where to change them, see `docs/parameters_reference.txt`.

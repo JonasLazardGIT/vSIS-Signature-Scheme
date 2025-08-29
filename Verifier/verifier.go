@@ -102,13 +102,10 @@ func Verify() bool {
 	copy(x1Eval.Coeffs[0], sig.X1)
 
 	// 7) recompute t = BBSHash
-	tCmp, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mEval, x0Eval, x1Eval)
-	if err != nil {
-		log.Fatalf("ComputeBBSHash: %v", err)
-	}
-	if err != nil {
-		log.Fatalf("ToPolyNTT: %v", err)
-	}
+    tCmp, err := vsishash.ComputeBBSHash(ringQ, Bcyclo, mEval, x0Eval, x1Eval)
+    if err != nil {
+        log.Fatalf("ComputeBBSHash: %v", err)
+    }
 
 	// 8) load target syndrome from signature
 	targetPoly := ringQ.NewPoly()

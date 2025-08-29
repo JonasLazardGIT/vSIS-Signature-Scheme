@@ -179,7 +179,7 @@ func TestPACSTampering(t *testing.T) {
 		t.Parallel()
 		ctx, _, _, _ := buildSim(t)
 		bumpConst(ctx.ringQ, ctx.Q[0], ctx.q)
-		ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega)
+        ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega, len(ctx.omega))
 		if ok {
 			t.Fatalf("expected Eq.(4) check to fail")
 		}
@@ -188,7 +188,7 @@ func TestPACSTampering(t *testing.T) {
 		t.Parallel()
 		ctx, _, _, _ := buildSim(t)
 		ctx.gammaP[0][0] = (ctx.gammaP[0][0] + 1) % ctx.q
-		ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega)
+        ok := checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega, len(ctx.omega))
 		if ok {
 			t.Fatalf("expected Eq.(4) check to fail")
 		}
@@ -249,7 +249,7 @@ func TestPACSParamGrid(t *testing.T) {
 func TestEq4TamperMaskOnly(t *testing.T) {
 	ctx, _, _, _ := buildSim(t)
 	bumpConst(ctx.ringQ, ctx.M[0], ctx.q)
-	if checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega) {
+    if checkEq4OnOpening(ctx.ringQ, ctx.Q, ctx.M, ctx.open, ctx.Fpar, ctx.Fagg, ctx.GammaP, ctx.gammaP, ctx.omega, len(ctx.omega)) {
 		t.Fatalf("Eq.(4) should fail when M is tampered")
 	}
 }
@@ -548,7 +548,7 @@ func buildSimWith(t *testing.T, o SimOpts) (*simCtx, bool, bool, bool) {
 	}
 
 	okLin := vrf.EvalStep2(bar, E, open.DECSOpen, C)
-	okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP, omega)
+    okEq4 := checkEq4OnOpening(ringQ, Q, M, open, Fpar, Fagg, GammaP, gammaP, omega, ncols)
 	okSum := VerifyQ(ringQ, Q, omega)
 
 	return ctx, okLin, okEq4, okSum
@@ -594,16 +594,20 @@ func columnsToRows(r *ring.Ring, w1 []*ring.Poly, w2 *ring.Poly, w3 []*ring.Poly
 
 // Eq.(4) consistency on each opened index (unchanged)
 func checkEq4OnOpening(r *ring.Ring, Q, M []*ring.Poly, op *lvcs.Opening,
-	Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]uint64, gammaP [][]uint64, omega []uint64) bool {
+    Fpar []*ring.Poly, Fagg []*ring.Poly, GammaP [][]uint64, gammaP [][]uint64, omega []uint64, ncols int) bool {
 	defer prof.Track(time.Now(), "checkEq4OnOpening")
 
 	q := r.Modulus[0]
 	tmp := r.NewPoly()
-	for i, idx := range op.DECSOpen.Indices {
-		j := idx - 1
-		w := omega[j]
-		r.InvNTT(Q[i], tmp)
-		lhs := EvalPoly(tmp.Coeffs[0], w, q)
+    for i, idx := range op.DECSOpen.Indices {
+        // Map opening index to its position in Ω: indices lie in the masked tail [ncols, ncols+ell)
+        j := idx - ncols
+        if j < 0 || j >= len(omega) {
+            return false
+        }
+        w := omega[j]
+        r.InvNTT(Q[i], tmp)
+        lhs := EvalPoly(tmp.Coeffs[0], w, q)
 
 		rhs := evalAt(r, M[i], w)
 		for t := range GammaP[i] {

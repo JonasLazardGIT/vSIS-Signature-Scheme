@@ -82,7 +82,7 @@ Implements **DECS.Commit Step 1**:
      \text{buf} = \bigl(P_0(e_i)\|…\|P_{r-1}(e_i)\|\;M_0(e_i)\|…\|M_{η-1}(e_i)\|\;i\|\;\rho_i\bigr)
    $$
 
-   where $\rho_i\in\{0,1\}^{\lambda}$ is a fresh nonce. We hash this via SHA-256 to get a 32-byte leaf.
+   encoding each $P_j(e_i)$ and $M_k(e_i)$ as 64-bit little-endian integers, the index $i$ as 32-bit little-endian, and appending a fresh $\rho_i\in\{0,1\}^{\lambda}$. We hash this buffer via SHA-256 to get a 32-byte leaf.
 
 4. **Merkle tree over leaves**
    We pad the leaf array to a power of two (filling missing leaves with `H(nil)`), then build all upper layers by hashing each pair of siblings. The root is saved in `pr.root`.
@@ -178,7 +178,7 @@ Implements **DECS.Eval Step 2**:
 1. **Pre-NTT** each `R[k]` back to evaluation form → `Re[k]`.
 2. For each opened index `e = open.Indices[t]`:
 
-   * **Reconstruct the leaf buffer** exactly as the prover did and run `VerifyPath` with the provided `open.Paths[t]`. This ensures that the revealed $(P_j(e),M_k(e))$ truly came from the committed Merkle root.
+   * **Reconstruct the leaf buffer** exactly as the prover did (64-bit little-endian values, 32-bit index, nonce) and run `VerifyPath` with the provided `open.Paths[t]`. This ensures that the revealed $(P_j(e),M_k(e))$ truly came from the committed Merkle root.
    * **Check the masked relation**: compute
 
      $$

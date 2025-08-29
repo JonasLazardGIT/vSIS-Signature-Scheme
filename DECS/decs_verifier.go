@@ -70,21 +70,21 @@ func (v *Verifier) VerifyEval(
 
 	mod := v.ringQ.Modulus[0]
 
-	for t, idx := range open.Indices {
-		// rebuild leaf
-		buf := make([]byte, 4*(v.r+v.params.Eta)+4+v.params.NonceBytes)
-		off := 0
-		for j := 0; j < v.r; j++ {
-			binary.LittleEndian.PutUint32(buf[off:], uint32(open.Pvals[t][j]))
-			off += 4
-		}
-		for k := 0; k < v.params.Eta; k++ {
-			binary.LittleEndian.PutUint32(buf[off:], uint32(open.Mvals[t][k]))
-			off += 4
-		}
-		binary.LittleEndian.PutUint32(buf[off:], uint32(idx))
-		off += 4
-		copy(buf[off:], open.Nonces[t])
+    for t, idx := range open.Indices {
+        // rebuild leaf (uint64 packing for values)
+        buf := make([]byte, 8*(v.r+v.params.Eta)+4+v.params.NonceBytes)
+        off := 0
+        for j := 0; j < v.r; j++ {
+            binary.LittleEndian.PutUint64(buf[off:], open.Pvals[t][j])
+            off += 8
+        }
+        for k := 0; k < v.params.Eta; k++ {
+            binary.LittleEndian.PutUint64(buf[off:], open.Mvals[t][k])
+            off += 8
+        }
+        binary.LittleEndian.PutUint32(buf[off:], uint32(idx))
+        off += 4
+        copy(buf[off:], open.Nonces[t])
 
 		if !VerifyPath(buf, open.Paths[t], root, idx) {
 			if debugDECS {

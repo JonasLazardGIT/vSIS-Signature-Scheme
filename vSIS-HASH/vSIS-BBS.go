@@ -2,20 +2,17 @@
 //
 // Exact-ring implementation of the vSIS-BBS hash.
 // Floating-point “field” arithmetic has been removed; every operand is an
-// *ring.Poly in **NTT** domain and all products are plain Hadamard
-// multiplications.  The only non-trivial step is the slot-wise inverse of the
+// *ring.Poly in NTT (evaluation) domain and all products are Hadamard
+// multiplications. The only non-trivial step is the slot-wise inverse of the
 // denominator, implemented below as polyInverseNTT.
 //
-// Public API — names **unchanged**
+// Public API
 //
-//	GenerateB       (unchanged – still samples B in coeff domain)
-//	ComputeBBSHash  (now exact)
-//	ToPolyNTT       (unchanged)
+//  - GenerateB (samples B in coefficient domain; caller may NTT)
+//  - ComputeBBSHash (exact, returns NTT-domain result)
 //
-// A self-contained test `TestPolyInverseNTT` is included and can be executed
-// with
-//
-//	go test github.com/your-mod/vSIS-Signature/vsishash
+// Note: ComputeBBSHash NTT-lifts m/x0/x1 in place. Callers that need the
+// original operands should pass copies.
 package vsishash
 
 import (

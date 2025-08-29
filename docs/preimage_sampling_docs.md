@@ -108,8 +108,7 @@ Demonstrates the full sampling flow.
 
 ## `vSIS-HASH/vSIS-BBS.go`
 
-Functions supporting the hash used in the signature scheme.
+Exact ring implementation of the BBS hash used in the signature scheme.
 
-- `GenerateB(ringQ, prec, prng)` — sample four random polynomials and convert them to evaluation-domain field elements. 【F:vSIS-HASH/vSIS-BBS.go†L11-L28】
-- `ComputeBBSHash(ringQ, B, m, x0, x1, prec)` — compute the floating‑point BBS hash. Uses field multiplication and inversion. 【F:vSIS-HASH/vSIS-BBS.go†L31-L72】
-- `ToPolyNTT(elem, ringQ)` — convert an evaluation-domain element back into an NTT polynomial. Calls `ToCoeffNegacyclic` and `ConvertToPolyBig`. 【F:vSIS-HASH/vSIS-BBS.go†L75-L90】
+- `GenerateB(ringQ, prng)` — samples four random polynomials in coefficient domain. The caller should NTT-lift them if needed. 【F:vSIS-HASH/vSIS-BBS.go†L33-L47】
+- `ComputeBBSHash(ringQ, B, m, x0, x1)` — exact computation in NTT domain using Hadamard products and slot-wise inversion. Note it NTT-lifts `m`, `x0`, `x1` in place. 【F:vSIS-HASH/vSIS-BBS.go†L75-L116】

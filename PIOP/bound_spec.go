@@ -25,11 +25,8 @@ func NewBoundSpec(q, beta uint64, w, ell int) BoundSpec {
 	if R >= q {
 		panic("R >= q")
 	}
-	bb := new(big.Int).SetUint64(beta)
-	bb.Mul(bb, bb) // beta^2
-	if bb.Cmp(new(big.Int).SetUint64(q)) >= 0 {
-		panic("beta^2 >= q")
-	}
+    bb := new(big.Int).SetUint64(beta)
+    bb.Mul(bb, bb) // beta^2 (may exceed q; decomposition does not require beta^2 < q)
 
 	BR := new(big.Int).SetUint64(R)
 	zero := new(big.Int)
